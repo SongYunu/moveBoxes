@@ -1,5 +1,9 @@
 # moveBoxes
 
+**새 단계 ACT 버전:** [Colab에서 열기](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_stages_colab.ipynb) · [실행 순서와 변경 사항](ver2/stages/README.md).
+집기·운반·놓기의 완료/복구 판단을 학습하고, 복구 시연 수집·학습·테스트를 난이도별로 실행합니다.
+기존 DP와 ACT ver2 파일 및 결과는 그대로 유지합니다.
+
 WarehouseSort 상자 분류를 위한 **Colab T4용 State Diffusion Policy** 실험입니다.
 Easy / Medium / Hard 각각 학습·테스트·평가 셀이 있으며, 다음 상자 집기 구간을 강조해 학습합니다.
 
