@@ -54,6 +54,7 @@ class GitHubStore:
                                'moveBoxes 저장소의 Contents: Read and write 권한이 필요합니다.')
         self.release = None
         self.assets = {}
+        self.file_cache = {}
 
     def headers(self):
         return {'Authorization': 'Bearer '+self.token, 'Accept': 'application/vnd.github+json',
@@ -129,11 +130,12 @@ class GitHubStore:
             while chunk := response.read(1024*1024):
                 handle.write(chunk)
 
-    def sync(self, root, scope, files=None):
+    def sync(self, root, scope, files=None, *, refresh=True):
         root = Path(root).resolve()
         if scope not in ('common', 'easy', 'medium', 'hard'):
             raise ValueError('Invalid snapshot scope')
-        self.load()
+        if refresh or self.release is None:
+            self.load()
         if files is None:
             files = (root/scope).rglob('*')
         entries = []
@@ -145,6 +147,13 @@ class GitHubStore:
             safe_target(root, relative)
             if '__pycache__' in path.parts or 'events.out.tfevents' in path.name:
                 continue
+            stat = path.stat()
+            signature = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
+            cache_key = (str(root), str(path))
+            cached = self.file_cache.get(cache_key)
+            if cached and cached[0] == signature and cached[1]['asset'] in self.assets:
+                entries.append(cached[1])
+                continue
             # Logs can still be appended by the notebook while the trainer pauses.
             # Hash and upload the same frozen bytes, never a moving source file.
             with tempfile.TemporaryDirectory() as staging:
@@ -153,7 +162,11 @@ class GitHubStore:
                 digest = sha256(frozen)
                 name = 'file-'+hashlib.sha256(relative.encode()).hexdigest()[:16]+'-'+digest+path.suffix
                 asset = self.upload(frozen, name)
-            entries.append(dict(path=relative, asset=name, sha256=digest, bytes=asset['size']))
+            entry = dict(path=relative, asset=name, sha256=digest, bytes=asset['size'])
+            entries.append(entry)
+            after = path.stat()
+            if signature == (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
+                self.file_cache[cache_key] = (signature, entry)
         if not entries:
             return None
         snapshot = dict(version=1, scope=scope, entries=entries)
@@ -211,9 +224,18 @@ class GitHubStore:
         return restored
 
 
+_SYNC_STORES = {}
+
+
 def sync_from_env():
     """Only called by subprocesses at completed checkpoint/episode boundaries."""
     if not os.environ.get('MOVEBOXES_SYNC_ROOT'):
         return
-    store = GitHubStore(os.environ['MOVEBOXES_GITHUB_REPO'], os.environ['MOVEBOXES_RELEASE_TAG'])
-    store.sync(Path(os.environ['MOVEBOXES_SYNC_ROOT']), os.environ['MOVEBOXES_SYNC_SCOPE'])
+    key = (os.environ['MOVEBOXES_GITHUB_REPO'], os.environ['MOVEBOXES_RELEASE_TAG'],
+           os.environ['MOVEBOXES_SYNC_ROOT'], os.environ['MOVEBOXES_SYNC_SCOPE'], os.environ.get('GH_TOKEN'))
+    if key not in _SYNC_STORES:
+        _SYNC_STORES[key] = GitHubStore(key[0], key[1])
+    # One GPU subprocess is the writer during an operation. Keep the uploaded
+    # asset index and unchanged-file cache between episodes; the parent refreshes
+    # the index after the subprocess exits. Every episode still publishes a snapshot.
+    _SYNC_STORES[key].sync(Path(key[2]), key[3], refresh=False)

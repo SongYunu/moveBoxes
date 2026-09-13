@@ -12,6 +12,48 @@ from github_store import GitHubStore
 from github_data import download_archive
 
 
+def github_token():
+    """Environment first, Colab Secrets second, private prompt as a fallback."""
+    token = os.environ.get('GH_TOKEN', '').strip()
+    if not token:
+        try:
+            from google.colab import userdata
+        except ImportError:
+            userdata = None
+        if userdata is not None:
+            try:
+                token = (userdata.get('GH_TOKEN') or '').strip()
+            except (userdata.SecretNotFoundError, userdata.NotebookAccessError):
+                pass
+    if not token:
+        from getpass import getpass
+        token = getpass('GitHub 토큰 입력 (이 런타임에서만 사용): ').strip()
+    if not token:
+        raise RuntimeError('GitHub 결과 저장에 사용할 토큰이 비어 있습니다. 03 셀을 다시 실행하세요.')
+    os.environ['GH_TOKEN'] = token
+    return token
+
+
+def final_checkpoint_patch(source):
+    anchor = '    evaluate_and_save_best(args.total_iters)'
+    if source.count(anchor) != 1:
+        raise ValueError('Official training completion boundary changed.')
+    # save_ckpt copies the current EMA before saving. Save before the last eval
+    # so a disconnect during that eval still retains the completed training.
+    return source.replace(anchor, '    save_ckpt(run_name, str(args.total_iters))\n'+anchor)
+
+
+def quiet_training_patch(source):
+    anchors = ('    pbar = tqdm(total=args.total_iters)',
+               '        pbar.set_postfix({"loss": total_loss.item()})')
+    if any(source.count(anchor) != 1 for anchor in anchors):
+        raise ValueError('Official training progress writer changed.')
+    source = source.replace(anchors[0], '    pbar = tqdm(total=args.total_iters, disable=not os.isatty(1))')
+    return source.replace(anchors[1], '''        pbar.set_postfix({"loss": total_loss.item()}, refresh=False)
+        if iteration % args.log_freq == 0 or iteration+1 == args.total_iters:
+            print(f"Train {iteration+1}/{args.total_iters}, loss={total_loss.item():.6f}", flush=True)''')
+
+
 def atomic_checkpoint_patch(source):
     anchor = '''    torch.save({
         'agent': agent.state_dict(),
@@ -40,7 +82,11 @@ class GitHubExperiment(NextPickExperiment):
         self.remote_enabled = config['profile'] != 'smoke'
 
     def connect(self):
+        if self.connected:
+            print('이미 연결된 실험:', self.run_dir)
+            return
         if self.remote_enabled:
+            github_token()
             tag = 'run-'+self.run_dir.name
             self.store = GitHubStore(self.cfg['github_repository'], tag)
             # Verify access before a long GPU run. A new release is safe to create.
@@ -50,12 +96,24 @@ class GitHubExperiment(NextPickExperiment):
                 print(f'GitHub에서 복원한 결과: {count} files')
             else:
                 print('현재 런타임의 로컬 결과를 유지합니다. 원격 복원은 빈 출력 폴더에서 수행합니다.')
-        super().connect()
-        if self.remote_enabled:
-            self.sync_common()
-            print('GitHub 결과:', f'https://github.com/{self.store.repository}/releases/tag/{self.store.tag}')
-        else:
-            print('100 iteration 동작 확인은 로컬 checks에만 저장합니다. 전체 학습 결과는 GitHub에 저장됩니다.')
+        try:
+            super().connect()
+            if self.remote_enabled:
+                self.sync_common()
+                print('GitHub 결과:', f'https://github.com/{self.store.repository}/releases/tag/{self.store.tag}')
+            else:
+                print('100 iteration 동작 확인은 로컬 checks에만 저장합니다. 전체 학습 결과는 GitHub에 저장됩니다.')
+        except BaseException:
+            self.connected = False
+            raise
+
+    def _ready(self):
+        # Cell 02 creates a fresh object. Recover its connection instead of
+        # failing much later in prepare_data/train when that cell was rerun.
+        if not self.connected:
+            print('저장소 연결을 준비합니다. 기존 GH_TOKEN과 저장 결과를 재사용합니다.')
+            self.connect()
+        super()._ready()
 
     def notebook_snapshot(self):
         from build_github_notebook import make_notebook
@@ -72,11 +130,12 @@ class GitHubExperiment(NextPickExperiment):
 
     def _stage_helpers(self):
         super()._stage_helpers()
-        (self.repo/'github_store.py').write_text(self.sources['github_store.py'], encoding='utf-8')
+        for name in ('github_store.py', 'colab_trace.py'):
+            (self.repo/name).write_text(self.sources[name], encoding='utf-8')
 
     def training_script(self, level, flags):
         script = super().training_script(level, flags)
-        source = atomic_checkpoint_patch(script.read_text(encoding='utf-8'))
+        source = quiet_training_patch(atomic_checkpoint_patch(final_checkpoint_patch(script.read_text(encoding='utf-8'))))
         script.write_text(source, encoding='utf-8')
         (self.run_dir/level/'train_next_pick.py').write_text(source, encoding='utf-8')
         (self.base/'github_store.py').write_text(self.sources['github_store.py'], encoding='utf-8')
@@ -120,6 +179,7 @@ class GitHubExperiment(NextPickExperiment):
 
     def sync_common(self):
         if self.remote_enabled and self.store and self.connected:
+            self.summary()
             files = [p for p in self.run_dir.iterdir() if p.is_file() and not p.name.startswith('.')]
             files += list(self.session.glob('*'))
             self.store.sync(self.run_dir, 'common', files)
@@ -152,6 +212,27 @@ class GitHubExperiment(NextPickExperiment):
         with self.persist_operation(level):
             return super().evaluate(level)
 
+    def diagnose(self, level):
+        """Two test-seed traces, separate from cached tests and final scores."""
+        from marso_experiment import LEVELS
+        self._ready()
+        assert level in LEVELS
+        candidate = self._test_candidate(level)
+        if candidate is None:
+            print(f'[{level}] 진단할 모델 없음. 이 난이도의 학습 셀을 먼저 실행하세요.')
+            return
+        checkpoint, policy = candidate
+        job = self._job(level, checkpoint, policy, self.test_seeds()[:2], 'trace')
+        job['trace_source_sha256'] = hashlib.sha256(self.sources['colab_trace.py'].encode()).hexdigest()
+        identity = job['fingerprint']+job['trace_source_sha256']
+        job['trace_dir'] = str(self.run_dir/level/'traces'/hashlib.sha256(identity.encode()).hexdigest()[:16])
+        path = self.run_dir/level/'trace_job.json'
+        with self.persist_operation(level):
+            save_json(path, job)
+            self.run([sys.executable, 'colab_trace.py', str(path)], cwd=self.repo,
+                     log=self.run_dir/level/'trace.log')
+        print(f'[{level}] 2회 상태·행동 진단 저장:', job['trace_dir'])
+
     def package(self):
         result = super().package()
         self.sync_common()
@@ -162,7 +243,8 @@ def source_bundle():
     from build_next_pick_notebook import sources
     bundle = sources()
     root = Path(__file__).parent
-    for name in ('github_store.py', 'github_data.py', 'marso_github.py', 'build_github_notebook.py'):
+    for name in ('github_store.py', 'github_data.py', 'marso_github.py', 'build_github_notebook.py',
+                 'colab_trace.py'):
         bundle[name] = (root/name).read_text(encoding='utf-8')
     evaluator = bundle['colab_eval_modular.py']
     anchor = "                save_json(job['output'],result_for(rows,job,elapsed+time.perf_counter()-tick))"

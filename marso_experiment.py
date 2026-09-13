@@ -306,6 +306,10 @@ for level, dims in [('easy',54),('medium',72),('hard',90)]:
             metrics = previous
             print(f'[{level}] 평가 재사용: {label} {metrics["sort_accuracy"]:.1%}')
         else:
+            if (previous and previous.get('protocol', {}).get('fingerprint') == job['fingerprint']
+                    and previous.get('episodes')):
+                done = len(previous['episodes'])
+                print(f'[{level}] {label}: 저장 {done}/{len(seeds)}회, 남은 {len(seeds)-done}회 이어 실행')
             job_path = self.run_dir/level/'eval_job.json'
             save_json(job_path,job)
             self.run([sys.executable,'colab_eval_modular.py',str(job_path)],cwd=self.repo,
@@ -431,12 +435,23 @@ for level, dims in [('easy',54),('medium',72),('hard',90)]:
             elif completed_metrics(metrics):
                 status = '저장 점수의 평가 조건이 현재 CONFIG와 다름'
             checkpoints = list((folder/'checkpoints').glob('*.pt'))
+            train_complete = (folder/'training_complete.json').exists()
+            completed = len(metrics.get('episodes', [])) if metrics else 0
+            same_protocol = (policy.get('level') == level
+                             and policy.get('max_steps') == self.cfg['max_episode_steps'][level]
+                             and policy.get('seeds') == expected)
+            partial = (not valid and same_protocol and 0 < completed < len(expected)
+                       and [r.get('seed') for r in metrics['episodes']] == expected[:completed])
             if valid:
                 status = '평가 완료'
+            elif partial:
+                status = f'평가 미완료 {completed}/{len(expected)}회 · 해당 평가 셀에서 이어 실행'
             elif not completed_metrics(metrics):
-                status = '평가 미완료' if checkpoints else '모델 없음'
-            rows.append(dict(level=level,train_complete=(folder/'training_complete.json').exists(),
+                status = ('학습 완료 · 최종 평가 대기' if train_complete else '학습 완료 기록 없음 · 저장 모델 있음') if checkpoints else '모델 없음'
+            rows.append(dict(level=level,train_complete=train_complete,
                              checkpoints=len(checkpoints),status=status,
+                             evaluation_episodes=completed, expected_episodes=len(expected),
+                             partial_sort_accuracy=metrics.get('sort_accuracy') if partial else None,
                              sort_accuracy=scores.get(level),weight=WEIGHTS[level]))
         summary = dict(profile=self.cfg['profile'],scores=scores,missing_levels=[l for l in LEVELS if l not in scores],
                        weighted_score=sum(WEIGHTS[l]*scores.get(l,0) for l in LEVELS),
@@ -455,6 +470,8 @@ for level, dims in [('easy',54),('medium',72),('hard',90)]:
         result = self.summary()
         for row in result['level_status']:
             score = '--' if row['sort_accuracy'] is None else f"{row['sort_accuracy']:.2%}"
+            if row['partial_sort_accuracy'] is not None:
+                score = f"{row['partial_sort_accuracy']:.2%} (중간)"
             print(f"{row['level']:6} | {score:>7} | {row['status']} | 학습완료 기록 {row['train_complete']}")
         print(f"가중 점수: {result['weighted_score']:.4f} / 미평가: {result['missing_levels']}")
         if videos:
