@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "repository": "SongYunu/moveBoxes",
+  "release": "dataset-v1",
+  "source": "https://www.kaggle.com/competitions/marso-hack-berlin-2026-robot-parcel-sorting-challenge/data",
+  "upstream": "https://github.com/marso-robotics/berlin-marso-hackathon",
+  "levels": [
+    "easy",
+    "medium",
+    "hard"
+  ],
+  "episodes_per_level": 200,
+  "notice": "Original dataset terms apply; this mirror does not grant a new dataset license.",
+  "archives": {
+    "state": {
+      "filename": "marso_state_data.zip",
+      "bytes": 68583055,
+      "sha256": "8348518cf6b50060082926bd76959af8bff8e5015bdce1fe474b875f7931dd10",
+      "url": "https://github.com/SongYunu/moveBoxes/releases/download/dataset-v1/marso_state_data.zip",
+      "files": [
+        {
+          "path": "easy/trajectory.state.pd_ee_delta_pos.physx_cuda.h5",
+          "bytes": 15260186,
+          "sha256": "8bdd9eccdab4643040a7269c215efd90267198ba5b4bfeba2049183fd2665593"
+        },
+        {
+          "path": "easy/trajectory.state.pd_ee_delta_pos.physx_cuda.json",
+          "bytes": 52261,
+          "sha256": "0e5a5ad61b9e5725b5f1526915804a4dd7c34c139cee88d8b998fd81f5347bbd"
+        },
+        {
+          "path": "medium/trajectory.state.pd_ee_delta_pos.physx_cuda.h5",
+          "bytes": 38742865,
+          "sha256": "614caa682cb92be22fe5f6ea73ab3e27ac28b22fc160c3884bf7ea272997af02"
+        },
+        {
+          "path": "medium/trajectory.state.pd_ee_delta_pos.physx_cuda.json",
+          "bytes": 52267,
+          "sha256": "11c8edb40f1e31af5025211459fccbe42fde9c054ba8697c7f7413514e860e7f"
+        },
+        {
+          "path": "hard/trajectory.state.pd_ee_delta_pos.physx_cuda.h5",
+          "bytes": 77031173,
+          "sha256": "a631536b1dbe980cdd6007b0f37c9901ca9eb2dc1bb6de1f89538b72cd9766ad"
+        },
+        {
+          "path": "hard/trajectory.state.pd_ee_delta_pos.physx_cuda.json",
+          "bytes": 52266,
+          "sha256": "b8a5daa338f24d5f796a38132017612c6b45e3c7b9ba74a296bbfbf51d1aa32d"
+        }
+      ]
+    },
+    "rgb": {
+      "filename": "marso_rgb_data.zip",
+      "bytes": 348506066,
+      "sha256": "ddaa37e42ebd0c73760743829a1368904379698a165b1d19d9d4acec8eed33b4",
+      "url": "https://github.com/SongYunu/moveBoxes/releases/download/dataset-v1/marso_rgb_data.zip",
+      "files": [
+        {
+          "path": "easy/trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5",
+          "bytes": 71298566,
+          "sha256": "3223f2f9ad7febd32f46a6bb4f5e6427e92d1d4284e0d0e4179e416589008145"
+        },
+        {
+          "path": "easy/trajectory.rgb.pd_ee_delta_pos.physx_cuda.json",
+          "bytes": 52259,
+          "sha256": "549104c98ccdfe71803b777c67d03f9cb0b79e9043bc435b19048505020771fd"
+        },
+        {
+          "path": "medium/trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5",
+          "bytes": 147836606,
+          "sha256": "a9572cd0c2f8c95be49f4af3fdfec16827477e392f42c9a1d92a7350c3edeeb0"
+        },
+        {
+          "path": "medium/trajectory.rgb.pd_ee_delta_pos.physx_cuda.json",
+          "bytes": 33979,
+          "sha256": "267243b11efb7b354f2c5c8a404d98aff1afb6cf98bef59a0b01aab8d7960b11"
+        },
+        {
+          "path": "hard/trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5",
+          "bytes": 248018085,
+          "sha256": "f4640c8c24de88f0a3c8704a29424d2d315eb3eb08e6361f14697c645b7af45f"
+        },
+        {
+          "path": "hard/trajectory.rgb.pd_ee_delta_pos.physx_cuda.json",
+          "bytes": 33978,
+          "sha256": "2443b5e53743994e0c9b127db03e91bbf99a7e10faf8dea5080bc6fef1d3f8aa"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+*.token
+kaggle.json
+.ipynb_checkpoints/
+upstream/
+runs/
+outputs/
+*.h5
+*.pt
+*.zip
+*.mp4
+*.part
+*.tmp
+data/cache/
