@@ -1,0 +1,17 @@
+name: Ver2 ACT checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  ver2-cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install numpy h5py
+      - run: python -m unittest discover -s tests_ver2 -v
+      - run: python build_act_v2_notebook.py
+      - run: git diff --exit-code -- notebooks/moveboxes_ver2_colab.ipynb
