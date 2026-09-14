@@ -56,7 +56,13 @@ def transplant(source_checkpoint, destination_arch, hard_mean, hard_std, output)
     model.load_state_dict(state)
     result=dict(format='moveboxes-stage-act-v1',model_config=destination_arch,model=model.state_dict(),
                 step=0,transfer=dict(source_dim=source_dim,source_step=saved.get('step'),mapped_features=len(pairs)))
-    Path(output).parent.mkdir(parents=True,exist_ok=True);torch.save(result,output)
+    Path(output).parent.mkdir(parents=True,exist_ok=True)
+    if Path(output).exists():
+        existing=torch.load(output,map_location='cpu',weights_only=True)
+        if (existing.get('model_config')!=destination_arch or set(existing.get('model',{}))!=set(result['model'])
+                or any(not torch.equal(existing['model'][key],value) for key,value in result['model'].items())):
+            raise ValueError('Saved transfer model differs; use a new run_name')
+    else:torch.save(result,output)
     return result['transfer']
 
 

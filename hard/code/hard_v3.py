@@ -25,7 +25,11 @@ class HardV3(HardV2):
         if not store.load(create=False):raise FileNotFoundError(f'{level} source Release unavailable')
         snapshots=sorted(n for n in store.assets if n.startswith(f'snapshot-{level}-'))
         if not snapshots:raise FileNotFoundError(f'{level} source snapshot unavailable')
-        snap_path=folder/'snapshot.json';store.download(store.assets[snapshots[-1]],snap_path)
+        provenance=read_json(self.run_dir/'hard/transfer_sources.json',[])
+        pinned=next((item for item in provenance if item['level']==level),None)
+        if pinned and pinned['run_name']!=run_name:raise ValueError('Donor run changed; use a new run_name')
+        snapshot_name=pinned['snapshot'] if pinned else snapshots[-1]
+        snap_path=folder/'snapshot.json';store.download(store.assets[snapshot_name],snap_path)
         snapshot=read_json(snap_path);entries={e['path']:e for e in snapshot['entries']}
         if snapshot.get('scope')!=level:raise ValueError('Donor snapshot scope mismatch')
         def fetch(relative,name):
@@ -33,28 +37,31 @@ class HardV3(HardV2):
             if not entry:raise FileNotFoundError(relative)
             target=folder/name;asset=store.assets.get(entry['asset'])
             if not asset or asset['size']!=entry['bytes']:raise ValueError('Donor snapshot incomplete')
-            if not target.exists():store.download(asset,target)
+            if not target.exists():
+                import os
+                pending=Path(str(target)+'.part');store.download(asset,pending)
+                if digest(pending)!=entry['sha256']:raise ValueError('Donor checksum mismatch')
+                os.replace(pending,target)
             if digest(target)!=entry['sha256']:raise ValueError('Donor checksum mismatch')
             return target,entry
         metadata=None
         for name in (f'{level}/lab_best.json',f'{level}/selection.json'):
             if name in entries:
                 metadata,_=fetch(name,'selection_source.json');break
-        preferred=[]
+        preferred=[];selected={}
         if metadata:
             value=read_json(metadata);selected=value.get('selected',value)
             if isinstance(selected,dict) and selected.get('checkpoint'):preferred.append(Path(selected['checkpoint']).name)
-        preferred += ['best_val.pt','latest.pt','initial_model.pt']
+        if not preferred:raise ValueError(f'{level}: no evaluated checkpoint selection in source snapshot')
         checkpoint_entry=None
         for basename in preferred:
             match=next((e for p,e in entries.items() if p.startswith(level+'/') and p.endswith('.pt') and Path(p).name==basename),None)
             if match:checkpoint_entry=match;break
-        if checkpoint_entry is None:
-            choices=[e for p,e in entries.items() if p.startswith(level+'/') and p.endswith('.pt')]
-            if not choices:raise FileNotFoundError(f'{level} checkpoint absent from snapshot')
-            checkpoint_entry=choices[0]
+        if checkpoint_entry is None:raise FileNotFoundError(f'{level}: selected checkpoint absent from snapshot')
+        if selected.get('checkpoint_sha256')!=checkpoint_entry['sha256']:raise ValueError('Selected donor hash mismatch')
         relative=checkpoint_entry['path'];checkpoint,_=fetch(relative,'donor.pt')
-        return dict(level=level,run_name=run_name,snapshot=snapshots[-1],checkpoint=str(checkpoint),sha256=digest(checkpoint))
+        return dict(level=level,run_name=run_name,snapshot=snapshot_name,checkpoint=str(checkpoint),sha256=digest(checkpoint),
+                    policy_config=selected['policy_config'])
 
     def prepare(self):
         super().prepare();folder=self.run_dir/'hard'
@@ -74,7 +81,7 @@ class HardV3(HardV2):
             job_path=folder/'transfer_job.json';save_json(job_path,job)
             self.run([sys.executable,'hard_transfer.py',str(job_path)],cwd=self.repo,log=folder/'transfer.log')
             save_json(folder/'transfer_sources.json',donors)
-        print('Easy/Medium 최고 모델을 Hard 구조로 변환했습니다. 07 셀이 둘을 비교하고 재학습합니다.')
+        print('전이 모델 준비:', ', '.join(d['level'] for d in donors))
 
     def _select_transfer(self):
         folder=self.run_dir/'hard';selection=read_json(folder/'transfer_selection.json')
