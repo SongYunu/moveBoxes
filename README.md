@@ -1,5 +1,8 @@
 # moveBoxes
 
+**Medium v2.2:** [집기 높이 보정 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_v22_colab.ipynb) · [실행 안내](MEDIUM_V22.md).
+v2.1의 모델과 32개 성공 시연을 재사용하고, 단계 판정을 고정한 채 집기 Z축과 그리퍼 타이밍만 짧게 보정합니다.
+
 **Medium v2.1:** [부분 성공 학습 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_v21_colab.ipynb) · [실행 안내](MEDIUM_V21.md).
 3개 분류 시연도 학습하고, 네 상자 완주 시연에만 속도 가중치를 줍니다. 시연 32개·최대 12,000회 보정입니다.
 
