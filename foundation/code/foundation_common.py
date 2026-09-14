@@ -71,7 +71,9 @@ class RGBData:
 
     def audit(self):
         return dict(hashes=self.hashes,stats=self.stats,episodes={k:{s:[self.items[i]['name'] for i in ids] for s,ids in splits.items()}
-            for k,splits in self.ids.items()},track='rgb',camera='scene_camera',resolution=[128,128],proprio_dim=26,action_dim=4)
+            for k,splits in self.ids.items()},track='rgb',downloaded_archives=['rgb'],camera='scene_camera',resolution=[128,128],
+            inputs=['scene_camera.rgb','agent.qpos','agent.qvel','extra.tcp_pose','extra.is_grasped'],
+            proprio_dim=26,privileged_state_dim=0,uses_privileged_state=False,action_dim=4)
 
     def batch(self,levels,rng,history,chunk,split='train'):
         rows=[]

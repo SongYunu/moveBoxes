@@ -104,6 +104,8 @@ class FoundationTests(unittest.TestCase):
     @unittest.skipUnless(all((ROOT.parent/l/'trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5').exists() for l in LEVELS),'local RGB data unavailable')
     def test_real_data_split_and_balanced_batch(self):
         import numpy as np
+        audit=self.data.audit();self.assertEqual(audit['downloaded_archives'],['rgb'])
+        self.assertEqual(audit['proprio_dim'],26);self.assertFalse(audit['uses_privileged_state'])
         for level in LEVELS:
             train=set(self.data.ids[level]['train']);valid=set(self.data.ids[level]['valid'])
             self.assertFalse(train & valid);self.assertEqual((len(train),len(valid)),(180,20))

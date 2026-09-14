@@ -18,6 +18,10 @@ seed의 `0.2×Easy + 0.3×Medium + 0.5×Hard`가 높은 checkpoint를 후보로 
 `pd_ee_delta_pos` action입니다. Octo의 원래 7차원 action 중 회전 3축은 loss에서 제외하고
 XYZ와 gripper만 연결합니다.
 
+여기서 26차원 proprioception은 `qpos 9 + qvel 9 + tcp_pose 7 + is_grasped 1`입니다.
+별도 state ZIP의 54차원 privileged observation은 다운로드하거나 입력하지 않습니다. RGB 평가 환경에서
+제공되지 않는 privileged 값을 학습에 넣으면 실제 평가 입력과 달라지기 때문입니다.
+
 Colab에서 **Python 3.12 / T4**를 선택하고 01~06을 먼저 실행합니다. 04번 셀은 현재 커널에
 모델 패키지를 섞지 않습니다. SmolVLA는 별도 Python 3.12 환경, Octo는 별도 Python 3.10/JAX
 환경, ManiSkill 평가는 별도 Python 3.12 환경에 설치됩니다. 개별 노트북의 01번 `backend`를

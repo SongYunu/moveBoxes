@@ -122,6 +122,10 @@ class FoundationExperiment:
         job=self.run_dir/'audit_job.json';write(job,dict(data=str(self.data),cfg=self.cfg,output=str(self.run_dir/'data_audit.json')))
         self.run([self.model_python,self.code/'foundation_worker.py','audit',job],self.run_dir/'audit.log',model=True)
         audit=read(self.run_dir/'data_audit.json')
+        if audit.get('track')!='rgb' or audit.get('proprio_dim')!=26 or audit.get('uses_privileged_state') is not False:
+            raise ValueError('Expected RGB track plus 26-D robot proprioception, without privileged state')
+        print('다운로드: RGB archive 1개 · 모델 입력: 128×128 RGB + 26-D robot proprioception')
+        print('별도 state archive의 54-D privileged state는 이 RGB 정책에서 사용하지 않습니다.')
         for level,groups in audit['episodes'].items():print(level,{k:len(v) for k,v in groups.items()})
         self.sync()
 
