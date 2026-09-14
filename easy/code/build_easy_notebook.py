@@ -1,6 +1,9 @@
 """Easy only: repeated short training and actual simulator feedback."""
 import json
+import sys
 from pathlib import Path
+PROJECT_ROOT=Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:sys.path.insert(0,str(PROJECT_ROOT))
 from build_stage_notebook import CONFIG as STAGE_CONFIG, make_notebook as stage_notebook
 
 CONFIG = dict(STAGE_CONFIG,run_name='moveboxes_easy_lab_v1',source_run_name='moveboxes_stage_act_v1',
@@ -32,6 +35,7 @@ def make_notebook(config=None):
     nb['cells'][0]['source']=('\n'.join(lines)+'\n').splitlines(keepends=True)
     bootstrap=''.join(nb['cells'][1]['source'])
     bootstrap=bootstrap.replace('from stage_experiment import StageExperiment, source_bundle\nexperiment = StageExperiment(CFG, source_bundle())',
+        "sys.path.insert(0, str(PROJECT/'easy'/'code'))\n"
         "for name in ('build_easy_notebook','easy_lab'):\n"
         "    if name in sys.modules:\n        importlib.reload(sys.modules[name])\n"
         "from build_easy_notebook import CONFIG as EASY_DEFAULTS\n"
@@ -58,6 +62,6 @@ if __name__ == '__main__':
     nb=make_notebook()
     for i,c in enumerate(nb['cells']):
         compile(''.join(c['source']),str(i),'exec')
-    path=Path(__file__).parent/'notebooks/moveboxes_easy_colab.ipynb'
+    path=Path(__file__).parents[1]/'notebooks/moveboxes_easy_colab.ipynb'
     path.write_text(json.dumps(nb,ensure_ascii=False,indent=2),encoding='utf-8')
     print(path.name,len(nb['cells']),'code cells')

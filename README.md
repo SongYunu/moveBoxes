@@ -1,18 +1,24 @@
 # moveBoxes
 
-**Medium v2.2:** [집기 높이 보정 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_v22_colab.ipynb) · [실행 안내](MEDIUM_V22.md).
+난이도별 코드는 [`easy/`](easy/README.md), [`medium/`](medium/README.md), [`hard/`](hard/README.md)에 분리되어 있습니다.
+공통 모델과 GitHub 저장 코드는 루트 및 `ver2/`에 있습니다.
+
+**Hard 실행:** [Hard 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/hard/notebooks/moveboxes_hard_colab.ipynb) · [실행 안내](hard/README.md).
+집기 실패 뒤 복구 시연 수집부터 Hard 학습·테스트·최종 평가까지 별도 Release에서 실행합니다.
+
+**Medium v2.2:** [집기 높이 보정 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/medium/notebooks/moveboxes_medium_v22_colab.ipynb) · [실행 안내](medium/docs/V22.md).
 v2.1의 모델과 32개 성공 시연을 재사용하고, 단계 판정을 고정한 채 집기 Z축과 그리퍼 타이밍만 짧게 보정합니다.
 
-**Medium v2.1:** [부분 성공 학습 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_v21_colab.ipynb) · [실행 안내](MEDIUM_V21.md).
+**Medium v2.1:** [부분 성공 학습 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/medium/notebooks/moveboxes_medium_v21_colab.ipynb) · [실행 안내](medium/docs/V21.md).
 3개 분류 시연도 학습하고, 네 상자 완주 시연에만 속도 가중치를 줍니다. 시연 32개·최대 12,000회 보정입니다.
 
-**Medium v2:** [별도 Colab 노트북](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_v2_colab.ipynb) · [실행 안내](MEDIUM_V2.md).
+**Medium v2:** [별도 Colab 노트북](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/medium/notebooks/moveboxes_medium_v2_colab.ipynb) · [실행 안내](medium/docs/V2.md).
 199행동 내 성공 시연을 먼저 시험하고, 기존 최고 모델을 최대 3,000회 보정합니다. 결과는 별도 Release에 저장합니다.
 
-**Medium 실행:** [Medium 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_colab.ipynb) · [실행 안내](MEDIUM_LAB.md).
+**Medium 실행:** [Medium 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/medium/notebooks/moveboxes_medium_colab.ipynb) · [실행 안내](medium/README.md).
 Easy 집중 실험과 같은 학습 방식으로 Medium의 네 상자를 학습합니다. 01~05 준비 → 06 반복 학습 → 07 테스트 순서입니다.
 
-**Easy에 집중할 때:** [Easy 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_easy_colab.ipynb) · [실행 안내](EASY_LAB.md).
+**Easy에 집중할 때:** [Easy 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/easy/notebooks/moveboxes_easy_colab.ipynb) · [실행 안내](easy/README.md).
 2,000회마다 실제 평가하고 가장 좋은 모델을 보존합니다. Medium/Hard 학습 셀은 없습니다.
 
 **GitHub 422 저장 오류:** 한 Release의 파일 수 한도에 도달한 경우 `-part-002` 등으로 자동 이어 저장합니다.

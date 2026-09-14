@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-ROOT=Path(__file__).resolve().parents[1]
-sys.path[:0]=[str(ROOT/'ver2/stages'),str(ROOT/'ver2'),str(ROOT)]
+ROOT=Path(__file__).resolve().parents[2]
+sys.path[:0]=[str(ROOT/'medium/code'),str(ROOT/'ver2/stages'),str(ROOT/'ver2'),str(ROOT)]
 import numpy as np
 import h5py
 from medium_lab import MediumLab,source_bundle,quality
@@ -38,6 +38,7 @@ class MediumLabTests(unittest.TestCase):
                 self.assertNotIn('"easy"',code)
                 self.assertNotIn('"hard"',code)
         self.assertTrue((ROOT/'notebooks/moveboxes_stages_colab.ipynb').exists())
+        self.assertTrue((ROOT/'medium/notebooks/moveboxes_medium_colab.ipynb').exists())
         self.assertIn('stage_train.py',source_bundle())
 
     def test_training_and_eval_resume_at_block_boundary_and_preserve_best(self):

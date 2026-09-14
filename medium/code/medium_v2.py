@@ -164,7 +164,7 @@ class MediumV2(MediumLab):
 
 def source_bundle():
     bundle=medium_sources();root=Path(__file__).parent
-    for path in (root/'ver2/deadline').glob('deadline_*.py'):
+    for path in (root/'deadline').glob('deadline_*.py'):
         bundle[path.name]=path.read_text(encoding='utf-8')
     # Alias is scoped to this experiment; the original trainer file is untouched.
     bundle['stage_train.py']=bundle['deadline_train.py']

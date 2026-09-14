@@ -138,7 +138,7 @@ print(f'시연 집기 전 TCP-상자 중심 높이 차: 중앙값 {g.median():.1
 
 def source_bundle():
     bundle = v21_sources();root=Path(__file__).parent
-    bundle['zfocus_model.py']=(root/'ver2/zfocus/zfocus_model.py').read_text(encoding='utf-8')
+    bundle['zfocus_model.py']=(root/'zfocus/zfocus_model.py').read_text(encoding='utf-8')
     bundle['stage_train.py']=bundle['curriculum_train.py'].replace(
         'from stage_model import StageACT, stage_loss','from zfocus_model import StageACT, stage_loss')
     for name in ('medium_v22.py','build_medium_v22_notebook.py'):

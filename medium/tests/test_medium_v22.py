@@ -6,9 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-ROOT=Path(__file__).resolve().parents[1]
-sys.path[:0]=[str(ROOT/'ver2/zfocus'),str(ROOT/'ver2/curriculum'),str(ROOT/'ver2/deadline'),
-    str(ROOT/'ver2/stages'),str(ROOT/'ver2'),str(ROOT),str(ROOT/'tests_stages')]
+ROOT=Path(__file__).resolve().parents[2]
+sys.path[:0]=[str(ROOT/'medium/tests'),str(ROOT/'medium/code'),str(ROOT/'medium/code/zfocus'),
+    str(ROOT/'medium/code/curriculum'),str(ROOT/'medium/code/deadline'),str(ROOT/'ver2/stages'),
+    str(ROOT/'ver2'),str(ROOT),str(ROOT/'tests_stages')]
 import torch
 from zfocus_model import StageACT, stage_loss
 from build_medium_v22_notebook import CONFIG, make_notebook

@@ -154,7 +154,7 @@ class MediumV21(MediumV2):
 
 def source_bundle():
     bundle=v2_sources();root=Path(__file__).parent
-    for path in (root/'ver2/curriculum').glob('curriculum_*.py'):
+    for path in (root/'curriculum').glob('curriculum_*.py'):
         bundle[path.name]=path.read_text(encoding='utf-8')
     bundle['stage_train.py']=bundle['curriculum_train.py']
     bundle['colab_eval_modular.py']=bundle['curriculum_eval.py']

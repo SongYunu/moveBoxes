@@ -1,6 +1,8 @@
 # Easy 집중 실험
 
-[Easy 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_easy_colab.ipynb)을 Colab 2026.07 / Python 3.12 / T4에서 엽니다.
+[Easy 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/easy/notebooks/moveboxes_easy_colab.ipynb)을 Colab 2026.07 / Python 3.12 / T4에서 엽니다.
+
+코드는 `easy/code/`, 노트북은 `easy/notebooks/`, 검사는 `easy/tests/`에 있습니다.
 
 | 셀 | 실행 내용 |
 |---|---|

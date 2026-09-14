@@ -1,6 +1,9 @@
 # Medium 집중 실험
 
-[Medium 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_colab.ipynb)을 Colab 2026.07 / Python 3.12 / T4에서 실행합니다.
+[Medium 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/medium/notebooks/moveboxes_medium_colab.ipynb)을 Colab 2026.07 / Python 3.12 / T4에서 실행합니다.
+
+코드와 방법별 하위 모듈은 `medium/code/`, 노트북은 `medium/notebooks/`, 버전 설명은
+`medium/docs/`, 검사는 `medium/tests/`에 있습니다.
 
 | 셀 | 내용 |
 |---|---|

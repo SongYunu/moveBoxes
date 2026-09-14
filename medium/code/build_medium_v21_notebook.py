@@ -38,6 +38,6 @@ def make_notebook(config=None):
 if __name__=='__main__':
     nb=make_notebook()
     for i,c in enumerate(nb['cells']):compile(''.join(c['source']),str(i),'exec')
-    path=Path(__file__).parent/'notebooks/moveboxes_medium_v21_colab.ipynb'
+    path=Path(__file__).parents[1]/'notebooks/moveboxes_medium_v21_colab.ipynb'
     path.write_text(json.dumps(nb,ensure_ascii=False,indent=2),encoding='utf-8')
     print(path.name,len(nb['cells']),'code cells')

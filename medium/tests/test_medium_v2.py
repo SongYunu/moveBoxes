@@ -6,8 +6,9 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-ROOT=Path(__file__).resolve().parents[1]
-sys.path[:0]=[str(ROOT/'ver2/deadline'),str(ROOT/'ver2/stages'),str(ROOT/'ver2'),str(ROOT)]
+ROOT=Path(__file__).resolve().parents[2]
+sys.path[:0]=[str(ROOT/'medium/tests'),str(ROOT/'medium/code'),str(ROOT/'medium/code/deadline'),
+    str(ROOT/'ver2/stages'),str(ROOT/'ver2'),str(ROOT)]
 import numpy as np
 import torch
 from deadline_teacher import DeadlineTeacher
