@@ -13,6 +13,7 @@ import torch
 from zfocus_model import StageACT, stage_loss
 from build_medium_v22_notebook import CONFIG, make_notebook
 from medium_v22 import MediumV22, source_bundle
+from github_store import compact_medium_files
 from test_medium_v21 import dataset
 import curriculum_train
 
@@ -76,6 +77,19 @@ class HeightTests(unittest.TestCase):
             self.assertEqual(exp.cfg['source_run_name'],'moveboxes_medium_curriculum_v21')
             self.assertEqual(exp.cfg['contact_z_weight'],6.)
         finally:sys.path[:]=previous
+
+    def test_compact_backup_keeps_only_source_and_selected_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);folder=root/'medium';ck=folder/'checkpoints';ck.mkdir(parents=True)
+            for name in ('initial_model.pt','block_01.pt','block_02.pt','latest.pt'):(ck/name).write_bytes(name.encode())
+            (folder/'lab_best.json').write_text(json.dumps(dict(checkpoint='/old/run/block_02.pt')))
+            (folder/'lab_history.json').write_text('{}')
+            (folder/'train_block_01.log').write_text('large log')
+            collection=folder/'collection';collection.mkdir();(collection/'episode.npz').write_bytes(b'data')
+            root=root.resolve()
+            relative={p.relative_to(root).as_posix() for p in compact_medium_files(root)}
+            self.assertEqual(relative,{'medium/checkpoints/initial_model.pt','medium/checkpoints/block_02.pt',
+                'medium/lab_best.json','medium/lab_history.json'})
 
 
 if __name__=='__main__':unittest.main()

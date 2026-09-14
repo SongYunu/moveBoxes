@@ -1,5 +1,6 @@
 """Medium v2.2: reuse verified demonstrations and correct pickup height separately."""
 import hashlib
+import contextlib
 import os
 from pathlib import Path
 from medium_v21 import MediumV21, source_bundle as v21_sources
@@ -25,6 +26,35 @@ class MediumV22(MediumV21):
         for name, source in self.sources.items():
             if name.startswith('zfocus_'):
                 (self.repo/name).write_text(source, encoding='utf-8')
+
+    @contextlib.contextmanager
+    def sync_environment(self, scope):
+        name='MOVEBOXES_COMPACT_MEDIUM_SYNC';previous=os.environ.get(name)
+        with super().sync_environment(scope):
+            if scope=='medium':os.environ[name]='1'
+            try:
+                yield
+            finally:
+                if previous is None:os.environ.pop(name,None)
+                else:os.environ[name]=previous
+
+    def sync_level(self, level):
+        if level!='medium':
+            return super().sync_level(level)
+        if self.remote_enabled and self.store:
+            from github_store import compact_medium_files
+            files=compact_medium_files(self.run_dir)
+            if files:self.store.sync(self.run_dir,level,files)
+
+    def run(self, command, cwd=None, log=None):
+        # Development work is committed once at its block boundary by run_blocks.
+        # Avoid one Release snapshot per internal evaluation episode.
+        local_only = log is not None and Path(log).stem.startswith(('train_block_','dev_b','baseline'))
+        if local_only:
+            from marso_experiment import Experiment
+            with self.sync_environment(None):
+                return Experiment.run(self,command,cwd=cwd,log=log)
+        return super().run(command,cwd=cwd,log=log)
 
     def prepare(self):
         super().prepare()

@@ -41,6 +41,35 @@ def safe_target(root, relative):
     return path
 
 
+def compact_medium_files(root):
+    """Files sufficient to restore a selected Medium model without training debris."""
+    root = Path(root).resolve()
+    folder = root/'medium'
+    names = {
+        'v2_origin.json','v2_source_snapshot.json','source_best.json','inputs_ready.json',
+        'lab_best.json','lab_history.json','lab_protocol.json','selection.json',
+        'stage_train_job.json','data_audit.json','model_info.json','test_metrics.json','metrics.json',
+    }
+    files = [folder/name for name in names if (folder/name).is_file()]
+    best_path = folder/'lab_best.json'
+    checkpoints = {folder/'checkpoints/initial_model.pt'}
+    if best_path.exists():
+        try:
+            best = json.loads(best_path.read_text(encoding='utf-8'))
+            candidate = folder/'checkpoints'/Path(best['checkpoint']).name
+            if candidate.resolve().parent != (folder/'checkpoints').resolve():
+                raise ValueError('Invalid selected checkpoint path')
+            checkpoints.add(candidate)
+        except (KeyError, json.JSONDecodeError):
+            pass
+    files += [path for path in checkpoints if path.is_file()]
+    policy = folder/'checkpoints/policy_config.json'
+    if policy.is_file():
+        files.append(policy)
+    files += [path for path in folder.glob('*.mp4') if path.is_file()]
+    return sorted(set(files))
+
+
 class AssetUploadError(RuntimeError):
     def __init__(self,status):
         self.status = status
@@ -299,4 +328,6 @@ def sync_from_env():
     # One GPU subprocess is the writer during an operation. Keep the uploaded
     # asset index and unchanged-file cache between episodes; the parent refreshes
     # the index after the subprocess exits. Every episode still publishes a snapshot.
-    _SYNC_STORES[key].sync(Path(key[2]), key[3], refresh=False)
+    root = Path(key[2])
+    files = compact_medium_files(root) if os.environ.get('MOVEBOXES_COMPACT_MEDIUM_SYNC')=='1' and key[3]=='medium' else None
+    _SYNC_STORES[key].sync(root, key[3], files, refresh=False)
