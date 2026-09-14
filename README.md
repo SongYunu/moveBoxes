@@ -1,5 +1,8 @@
 # moveBoxes
 
+**Medium 실행:** [Medium 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_colab.ipynb) · [실행 안내](MEDIUM_LAB.md).
+Easy 집중 실험과 같은 학습 방식으로 Medium의 네 상자를 학습합니다. 01~05 준비 → 06 반복 학습 → 07 테스트 순서입니다.
+
 **Easy에 집중할 때:** [Easy 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_easy_colab.ipynb) · [실행 안내](EASY_LAB.md).
 2,000회마다 실제 평가하고 가장 좋은 모델을 보존합니다. Medium/Hard 학습 셀은 없습니다.
 
