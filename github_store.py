@@ -41,6 +41,12 @@ def safe_target(root, relative):
     return path
 
 
+class AssetUploadError(RuntimeError):
+    def __init__(self,status):
+        self.status = status
+        super().__init__(f'GitHub asset upload failed ({status}); local files are retained.')
+
+
 class GitHubStore:
     def __init__(self, repository, tag, token=None):
         if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
@@ -55,6 +61,8 @@ class GitHubStore:
         self.release = None
         self.assets = {}
         self.file_cache = {}
+        self.part = 1
+        self.write_asset_count = 0
 
     def headers(self):
         return {'Authorization': 'Bearer '+self.token, 'Accept': 'application/vnd.github+json',
@@ -75,35 +83,87 @@ class GitHubStore:
             # Do not include headers or token-bearing requests in exception messages.
             raise RuntimeError(f'GitHub {method} failed ({error.code}); check token permissions and repository access.') from None
 
-    def load(self, create=True):
+    def _release_for_part(self, part, create=False):
         base = '/repos/'+self.repository+'/releases'
-        self.release = self.request('GET', base+'/tags/'+self.tag)
-        if self.release is None:
+        tag = self.tag if part == 1 else f'{self.tag}-part-{part:03d}'
+        release = self.request('GET', base+'/tags/'+tag)
+        if release is None:
             if not create:
-                return False
-            self.release = self.request('POST', base, dict(tag_name=self.tag, name=self.tag,
-                body='Colab experiment snapshots. Each snapshot is published after all referenced files are uploaded.',
-                draft=False, prerelease=True, make_latest='false'))
-        self.assets = {}
+                return None
+            try:
+                release = self.request('POST', base, dict(tag_name=tag, name=tag,
+                    body='Colab experiment snapshots for '+self.tag+'. Referenced files may be in earlier parts.',
+                    draft=False, prerelease=True, make_latest='false'))
+            except RuntimeError:
+                # Another notebook may have created the same next part meanwhile.
+                release = self.request('GET', base+'/tags/'+tag)
+                if release is None:
+                    raise
+        return release
+
+    def _assets_for_release(self, release):
+        items_by_name = {}
         page = 1
         while True:
-            items = self.request('GET', base+f"/{self.release['id']}/assets?per_page=100&page={page}")
+            items = self.request('GET', f"/repos/{self.repository}/releases/{release['id']}/assets?per_page=100&page={page}")
             if items is None:
                 raise RuntimeError('Cannot read release assets')
-            self.assets.update({item['name']: item for item in items})
+            items_by_name.update({item['name']: item for item in items})
             if len(items) < 100:
                 break
             page += 1
+        return items_by_name
+
+    def load(self, create=True):
+        release = self._release_for_part(1,create=create)
+        if release is None:
+            return False
+        self.assets = {}
+        part = 1
+        while release is not None:
+            assets = self._assets_for_release(release)
+            self.assets.update(assets)
+            self.release,self.part,self.write_asset_count = release,part,len(assets)
+            part += 1
+            release = self._release_for_part(part)
         return True
+
+    def _next_part(self):
+        self.part += 1
+        self.release = self._release_for_part(self.part,create=True)
+        assets = self._assets_for_release(self.release)
+        self.assets.update(assets)
+        self.write_asset_count = len(assets)
+        print(f'GitHub 저장 공간 이어쓰기: {self.release["tag_name"]}',flush=True)
 
     def upload(self, path, name):
         path = Path(path)
+        if self.release is None:
+            self.load()
         if name in self.assets:
             if self.assets[name]['size'] != path.stat().st_size:
                 raise RuntimeError('Existing immutable asset has an unexpected size')
             return self.assets[name]
-        if self.release is None:
-            self.load()
+        # GitHub permits 1,000 assets per Release. Rotate before exhausting it;
+        # old assets remain addressable and every complete snapshot still restores.
+        while self.write_asset_count >= 950:
+            self._next_part()
+        try:
+            return self._upload_once(path,name)
+        except AssetUploadError as error:
+            if error.status != 422:
+                raise
+            self.load(create=False)
+            if name in self.assets:
+                if self.assets[name]['size'] != path.stat().st_size:
+                    raise RuntimeError('Existing immutable asset has an unexpected size') from None
+                return self.assets[name]
+            if self.write_asset_count >= 950:
+                self._next_part()
+                return self._upload_once(path,name)
+            raise
+
+    def _upload_once(self, path, name):
         endpoint = f"/repos/{self.repository}/releases/{self.release['id']}/assets?name="+urllib.parse.quote(name)
         headers = self.headers() | {'Content-Type': 'application/octet-stream',
                                    'Content-Length': str(path.stat().st_size)}
@@ -114,9 +174,10 @@ class GitHubStore:
                 response = connection.getresponse()
                 body = response.read()
             if response.status != 201:
-                raise RuntimeError(f'GitHub asset upload failed ({response.status}); local files are retained.')
+                raise AssetUploadError(response.status)
             asset = json.loads(body)
             self.assets[name] = asset
+            self.write_asset_count += 1
             return asset
         finally:
             connection.close()

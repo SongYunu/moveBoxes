@@ -62,17 +62,31 @@ def split_data(trajectories, seed):
 
 
 class StageWindows:
-    def __init__(self, trajectories, ids, history, chunk, training=True):
+    def __init__(self, trajectories, ids, history, chunk, training=True, first_pick_fraction=0.):
         self.trajectories, self.history, self.chunk, self.training = trajectories, history, chunk, training
+        if not 0 <= first_pick_fraction < 1:
+            raise ValueError('first_pick_fraction must be in [0,1)')
+        self.first_pick_fraction = first_pick_fraction
         self.indices = [(i,t) for i in ids for t in range(len(trajectories[i]['actions']))]
         self.recovery = [(i,t) for i,t in self.indices if trajectories[i]['source'] == 'recovery']
         self.transitions = [(i,t) for i,t in self.indices if int(trajectories[i]['gate'][t]) != HOLD]
+        self.first_pick = []
+        if first_pick_fraction:
+            for i in ids:
+                lifted = torch.nonzero(trajectories[i]['stage'] == CARRY).flatten()
+                end = int(lifted[0])+1 if len(lifted) else len(trajectories[i]['actions'])
+                self.first_pick.extend((i,t) for t in range(end))
 
     def batch(self, size, generator, device, noise=0.):
         rows = {k:[] for k in ('obs','actions','mask','previous_stage','stage','gate')}
         for _ in range(size):
             p = float(torch.rand((), generator=generator)) if self.training else 1.
-            pool = self.recovery if p < .35 and self.recovery else self.transitions if p < .60 and self.transitions else self.indices
+            if self.training and self.first_pick and p < self.first_pick_fraction:
+                pool = self.first_pick
+            else:
+                if self.training and self.first_pick:
+                    p = (p-self.first_pick_fraction)/(1-self.first_pick_fraction)
+                pool = self.recovery if p < .35 and self.recovery else self.transitions if p < .60 and self.transitions else self.indices
             i,t = pool[int(torch.randint(len(pool), (), generator=generator))]
             traj = self.trajectories[i]
             stage, gate = int(traj['stage'][t]), int(traj['gate'][t])

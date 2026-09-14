@@ -1,5 +1,11 @@
 # moveBoxes
 
+**Easy에 집중할 때:** [Easy 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_easy_colab.ipynb) · [실행 안내](EASY_LAB.md).
+2,000회마다 실제 평가하고 가장 좋은 모델을 보존합니다. Medium/Hard 학습 셀은 없습니다.
+
+**GitHub 422 저장 오류:** 한 Release의 파일 수 한도에 도달한 경우 `-part-002` 등으로 자동 이어 저장합니다.
+현재 런타임은 초기화하지 않고 02 코드 로드 → 03 연결 셀을 다시 실행하세요. 기존 모델과 snapshot은 보존합니다.
+
 **단계 v1에서 첫 집기 실패가 발생한 경우:** [보정용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_stage_repair_colab.ipynb)의 01~06을 실행하세요.
 기존 모델·성공 시연을 재사용해 실행 조건으로 2,000회 보정 학습하고 테스트합니다. [원인과 검증 기록](ver2/stages/PRIOR_FIX.md).
 

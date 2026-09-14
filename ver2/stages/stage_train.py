@@ -59,7 +59,8 @@ def train(job):
     if any(t['obs'].shape[-1] != arch['state_dim'] for t in trajectories):
         raise ValueError('Training difficulty and observation dimensions differ')
     train_ids, val_ids = split_data(trajectories, cfg['seed'])
-    train_data = StageWindows(trajectories, train_ids, arch['history'], arch['chunk_size'])
+    train_data = StageWindows(trajectories, train_ids, arch['history'], arch['chunk_size'],
+                              first_pick_fraction=cfg.get('first_pick_fraction',0.))
     val_data = StageWindows(trajectories, val_ids, arch['history'], arch['chunk_size'], training=False)
     signature = dict(model_config=arch, train_config=cfg, data_sha256=digest(job['data']),
                      train_ids=train_ids, val_ids=val_ids, source_sha256=job['source_sha256'],
@@ -76,6 +77,7 @@ def train(job):
         supervisor_memory_augmentation='25% alternate previous-stage inputs; action/observation targets unchanged',
         chunk_masking='stop at stage/parcel boundaries and first perturbed executed action',
         action_training_mode=cfg.get('action_training_mode','prior'),
+        first_pick_fraction=cfg.get('first_pick_fraction',0.),
         raw_xyz_outside_action_bounds_fraction=sum(t['clipped_fraction'] for t in trajectories)/len(trajectories),
         soft_gripper_fraction=sum(t['soft_gripper_fraction'] for t in trajectories)/len(trajectories),
         gripper_labels='(clip(g,-1,1)+1)/2 soft BCE labels; latest inference logit chooses open/close',
@@ -119,7 +121,10 @@ def train(job):
     model.train()
     tick = last_print = time.monotonic()
     history = []
-    for step in range(start, cfg['total_iters']):
+    stop = int(job.get('stop_at',cfg['total_iters']))
+    if not start <= stop <= cfg['total_iters']:
+        raise ValueError('stop_at must be between the saved step and total_iters')
+    for step in range(start, stop):
         warmup = min(1., (step+1)/cfg['warmup_steps'])
         progress = max(0., (step-cfg['warmup_steps'])/max(1,cfg['total_iters']-cfg['warmup_steps']))
         lr = cfg['lr']*warmup*(.1+.9*(1+math.cos(math.pi*progress))/2)
@@ -138,12 +143,12 @@ def train(job):
         scaler.step(optimizer)
         scaler.update()
         done = step+1
-        if time.monotonic()-last_print >= cfg['console_interval_seconds'] or done == cfg['total_iters']:
+        if time.monotonic()-last_print >= cfg['console_interval_seconds'] or done == stop:
             rate = (done-start)/max(.001,time.monotonic()-tick)
             print(f"{done}/{cfg['total_iters']} loss={float(loss.detach()):.4f} "
                   f"{rate:.1f} it/s ETA={(cfg['total_iters']-done)/rate/60:.1f} min", flush=True)
             last_print = time.monotonic()
-        if done % cfg['save_freq'] == 0 or done == cfg['total_iters']:
+        if done % cfg['save_freq'] == 0 or done == stop:
             val_loss = validate(model, val_data, cfg, device)
             weights = dict(format='moveboxes-stage-act-v1', model_config=arch, model=model.state_dict(), step=done)
             if val_loss < best:
@@ -159,8 +164,9 @@ def train(job):
             save_json(folder/'train_status.json', dict(status='running', step=done))
             print(f'Checkpoint {done}: prior validation loss={val_loss:.4f}', flush=True)
             sync_from_env()
-    save_json(folder/'training_complete.json', dict(total_iters=cfg['total_iters'], model_config=arch))
-    save_json(folder/'train_status.json', dict(status='complete', step=cfg['total_iters']))
+    if stop == cfg['total_iters']:
+        save_json(folder/'training_complete.json', dict(total_iters=cfg['total_iters'], model_config=arch))
+    save_json(folder/'train_status.json', dict(status='complete' if stop == cfg['total_iters'] else 'paused', step=stop))
     sync_from_env()
 
 

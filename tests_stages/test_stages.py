@@ -189,6 +189,18 @@ class StageTests(unittest.TestCase):
             resumed=torch.load(root/'resume/checkpoints/latest.pt',weights_only=True)
             for key in full['model']:
                 torch.testing.assert_close(full['model'][key],resumed['model'][key],atol=0,rtol=0)
+            job['folder']=str(root/'blocks')
+            job['stop_at']=4
+            with patch('stage_train.sync_from_env'):
+                train(job)
+            self.assertFalse((root/'blocks/training_complete.json').exists())
+            self.assertEqual(json.loads((root/'blocks/train_status.json').read_text())['status'],'paused')
+            job['stop_at']=8
+            with patch('stage_train.sync_from_env'):
+                train(job)
+            blocks=torch.load(root/'blocks/checkpoints/latest.pt',weights_only=True)
+            for key in full['model']:
+                torch.testing.assert_close(full['model'][key],blocks['model'][key],atol=0,rtol=0)
 
     def test_notebook_all_levels_and_package_contains_only_learned_controller(self):
         nb=make_notebook()

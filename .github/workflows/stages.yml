@@ -14,4 +14,6 @@ jobs:
       - run: pip install numpy h5py
       - run: python -m unittest discover -s tests_stages -v
       - run: python build_stage_notebook.py
+      - run: python build_easy_notebook.py
       - run: git diff --exit-code -- notebooks/moveboxes_stages_colab.ipynb notebooks/moveboxes_stage_repair_colab.ipynb
+      - run: git diff --exit-code -- notebooks/moveboxes_easy_colab.ipynb
