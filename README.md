@@ -1,5 +1,8 @@
 # moveBoxes
 
+**기존 Medium 40.6% 모델을 Easy에 평가:** [학습 없는 별도 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_medium_block02_easy_test.ipynb) · [설명](unified/MEDIUM_PROBE.md).
+원본 `block_02.pt`를 그대로 로드하고 Easy의 없는 상자 입력만 패딩합니다. 01~05 준비 → 06 Easy 평가.
+
 **지금은 Medium부터: [Medium 집중 학습 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_unified_medium_colab.ipynb)** · [설명](unified/MEDIUM.md).
 v2에서 Easy 100%를 낸 실제 PT를 그대로 가져와 Medium 20,000회 학습합니다.
 기존 부분 성공 시연 32개와 원본 데이터를 재사용하며, Easy 성능 저하로 Medium 학습을 중단하지 않습니다.
