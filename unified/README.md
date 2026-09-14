@@ -1,5 +1,9 @@
 # T4 공유 모델 커리큘럼
 
+**이 문서는 이전 v1입니다.** 사용자 실행에서 Medium 초기값의 Easy 평가가 0점이었고,
+탈락 후 같은 초기값에서 반복 학습하는 문제가 확인됐습니다.
+현재는 [검증된 Easy에서 시작하는 v2](V2.md)를 사용하세요.
+
 [Colab에서 바로 열기](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_unified_colab.ipynb)
 
 기존 Medium 선택 모델을 초기 가중치로 사용하는 **state ACT 하나**입니다. 약 153만 파라미터,

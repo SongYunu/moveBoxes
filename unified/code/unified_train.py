@@ -15,7 +15,7 @@ def train(job):
         wanted=set(ids);by_level={k:[i for i in v if i in wanted] for k,v in (train_ids if training else valid_ids).items()}
         if not training:by_level={active:by_level[active]}
         return CurriculumWindows(items,by_level,history,chunk,active,manifest.get('focus'),training,
-            cfg['replay_fraction'],cfg['speed_bonus'])
+            cfg['replay_fraction'],cfg['speed_bonus'],cfg.get('focus_fraction',.5))
     names=('load_data','split_data','StageWindows');old={k:getattr(trainer,k) for k in names}
     trainer.load_data=lambda *args,**kwargs:trajectories
     trainer.split_data=lambda *args:([i for v in train_ids.values() for i in v],[i for v in valid_ids.values() for i in v])

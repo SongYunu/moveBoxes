@@ -1,0 +1,10 @@
+{
+  "checkpoint_sha256": "0fbbef92aacc5cbe5642568ec5bd349979934e50f3d03d5120ccd5350720ef19",
+  "recorded_final_score": 1.0,
+  "recorded_final_episodes": 100,
+  "observation_steps": 348,
+  "max_action_difference": 0.0,
+  "stage_choices_equal": true,
+  "device": "cpu",
+  "note": "Recorded Easy demonstration observations replayed to both policies; this is not a new physics rollout."
+}

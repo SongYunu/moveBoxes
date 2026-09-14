@@ -1,10 +1,11 @@
 # moveBoxes
 
-**현재 실행할 버전: [공유 모델 커리큘럼 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_unified_colab.ipynb)** · [실행 순서·시간·제약](unified/README.md).
-기존 Medium 가중치로 시작하는 작은 state ACT 하나를 Easy → Medium → Hard 순서로 보정합니다.
-실패와 관련된 전문가 시연 시간 구간을 더 자주 학습하고, 이전 난이도 데이터를 재사용합니다.
-전체 에피소드 통과 전에는 다음 단계로 넘어가지 않습니다. 01~06 준비/시간 측정 → 07 Easy부터 실행하세요.
-새 버전의 GPU 성능은 아직 측정하지 않았습니다. 아래 개별 난이도 노트북은 이전 실험 기록으로 유지합니다.
+**현재 실행할 버전: [공유 모델 v2 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_unified_v2_colab.ipynb)** · [실행 순서·수정 내용](unified/V2.md).
+기존 최종 Easy 100/100 성공 체크포인트에서 시작해 같은 모델을 Medium → Hard까지 이어 학습합니다.
+실패 관련 전문가 시간 구간을 집중 표집하고 이전 데이터를 재사용합니다. 학습 모델은 구간 사이에
+optimizer와 난수 상태까지 이어가며, 최고 성적 모델은 따로 보존합니다. 01~06 준비 → 07~08 Easy 확인부터 실행하세요.
+원본/변환 Easy를 같은 시드에서 먼저 비교합니다. 새 버전의 GPU 성능은 아직 측정하지 않았습니다.
+Medium 초기값을 Easy에 바로 적용해 실패했던 [통합 v1](unified/README.md)과 아래 개별 실험은 기록으로 유지합니다.
 
 난이도별 코드는 [`easy/`](easy/README.md), [`medium/`](medium/README.md), [`hard/`](hard/README.md)에 분리되어 있습니다.
 공통 모델과 GitHub 저장 코드는 루트 및 `ver2/`에 있습니다.

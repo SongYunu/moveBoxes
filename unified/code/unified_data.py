@@ -32,8 +32,9 @@ def load_curriculum(sources,seed):
 
 
 class CurriculumWindows:
-    def __init__(self,trajectories,ids,history,chunk,active,focus=None,training=True,replay_fraction=.3,speed_bonus=.5):
+    def __init__(self,trajectories,ids,history,chunk,active,focus=None,training=True,replay_fraction=.3,speed_bonus=.5,focus_fraction=.5):
         self.trajectories=trajectories;self.ids=ids;self.active=active;self.training=training;self.replay=replay_fraction
+        self.focus_fraction=focus_fraction
         self.pools={level:StageWindows(trajectories,indices,history,chunk,training=training) for level,indices in ids.items()}
         self.focus=None;self.speed=[];focus=focus or {}
         base=self.pools[active]
@@ -65,7 +66,7 @@ class CurriculumWindows:
         for j in range(replay):
             level=prior[int(torch.randint(len(prior),(1,),generator=generator))]
             parts.append(self.pools[level].batch(1,generator,device,noise))
-        remaining=size-replay;crop=remaining//2 if self.focus is not None else 0
+        remaining=size-replay;crop=min(remaining-1,int(remaining*self.focus_fraction)) if self.focus is not None else 0
         if crop:parts.append(self.focus.batch(crop,generator,device,noise))
         parts.append(self.pools[self.active].batch(remaining-crop,generator,device,noise))
         return {k:torch.cat([p[k] for p in parts]) for k in parts[0]}
