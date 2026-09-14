@@ -74,6 +74,7 @@ def compact_hard_files(root):
     root=Path(root).resolve();folder=root/'hard'
     names=('source_snapshot.json','inputs_ready.json','lab_best.json','lab_history.json','lab_protocol.json',
         'stage_train_job.json','model_info.json','data_audit.json','test_metrics.json','metrics.json','selection.json')
+    names += ('transfer_sources.json','transfer_selection.json','transfer_report.json','transfer_job.json')
     files=[folder/name for name in names if (folder/name).is_file()]
     best=folder/'lab_best.json'
     if best.exists():
