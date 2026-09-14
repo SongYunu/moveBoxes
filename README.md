@@ -1,5 +1,8 @@
 # moveBoxes
 
+**Medium v2:** [별도 Colab 노트북](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_v2_colab.ipynb) · [실행 안내](MEDIUM_V2.md).
+199행동 내 성공 시연을 먼저 시험하고, 기존 최고 모델을 최대 3,000회 보정합니다. 결과는 별도 Release에 저장합니다.
+
 **Medium 실행:** [Medium 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_colab.ipynb) · [실행 안내](MEDIUM_LAB.md).
 Easy 집중 실험과 같은 학습 방식으로 Medium의 네 상자를 학습합니다. 01~05 준비 → 06 반복 학습 → 07 테스트 순서입니다.
 
