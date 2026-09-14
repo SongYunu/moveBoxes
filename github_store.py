@@ -70,6 +70,24 @@ def compact_medium_files(root):
     return sorted(set(files))
 
 
+def compact_hard_files(root):
+    root=Path(root).resolve();folder=root/'hard'
+    names=('source_snapshot.json','inputs_ready.json','lab_best.json','lab_history.json','lab_protocol.json',
+        'stage_train_job.json','model_info.json','data_audit.json','test_metrics.json','metrics.json','selection.json')
+    files=[folder/name for name in names if (folder/name).is_file()]
+    best=folder/'lab_best.json'
+    if best.exists():
+        data=json.loads(best.read_text(encoding='utf-8'))
+        checkpoint=folder/'checkpoints'/Path(data['checkpoint']).name
+        if checkpoint.is_file():files.append(checkpoint)
+    policy=folder/'checkpoints/policy_config.json'
+    if policy.is_file():files.append(policy)
+    files.extend(folder.glob('*.mp4'))
+    # Two diagnostic traces are small enough to retain evidence for future fixes.
+    files.extend((folder/'traces').rglob('seed*.json'))
+    return sorted(set(files))
+
+
 class AssetUploadError(RuntimeError):
     def __init__(self,status):
         self.status = status
@@ -330,4 +348,5 @@ def sync_from_env():
     # the index after the subprocess exits. Every episode still publishes a snapshot.
     root = Path(key[2])
     files = compact_medium_files(root) if os.environ.get('MOVEBOXES_COMPACT_MEDIUM_SYNC')=='1' and key[3]=='medium' else None
+    if os.environ.get('MOVEBOXES_COMPACT_HARD_SYNC')=='1' and key[3]=='hard':files=compact_hard_files(root)
     _SYNC_STORES[key].sync(root, key[3], files, refresh=False)

@@ -6,6 +6,9 @@
 **Hard 실행:** [Hard 전용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/hard/notebooks/moveboxes_hard_colab.ipynb) · [실행 안내](hard/README.md).
 집기 실패 뒤 복구 시연 수집부터 Hard 학습·테스트·최종 평가까지 별도 Release에서 실행합니다.
 
+**Hard v2 권장:** [상자 선택·회전 조건화 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/hard/notebooks/moveboxes_hard_v2_colab.ipynb).
+기존 성공 시연을 재사용하고 1,000회마다 실제 점수로 최고 모델을 선택합니다.
+
 **Medium v2.2:** [집기 높이 보정 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/medium/notebooks/moveboxes_medium_v22_colab.ipynb) · [실행 안내](medium/docs/V22.md).
 v2.1의 모델과 32개 성공 시연을 재사용하고, 단계 판정을 고정한 채 집기 Z축과 그리퍼 타이밍만 짧게 보정합니다.
 
