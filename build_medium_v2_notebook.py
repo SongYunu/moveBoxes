@@ -40,7 +40,9 @@ def make_notebook(config=None):
         "for name in ('build_medium_v2_notebook','medium_v2'):\n"
         "    if name in sys.modules:\n        importlib.reload(sys.modules[name])\n"
         "from build_medium_v2_notebook import CONFIG as V2_DEFAULTS\n"
+        "PROJECT_COMMIT = CFG['project_commit']\n"
         "CFG = dict(V2_DEFAULTS, **USER_CONFIG)\n"
+        "CFG['project_commit'] = PROJECT_COMMIT\n"
         "from medium_v2 import MediumV2, source_bundle\nexperiment = MediumV2(CFG, source_bundle())")
     # Preserve the user's overrides before v1 fills its own hidden defaults.
     bootstrap='USER_CONFIG = dict(CFG)\n'+bootstrap

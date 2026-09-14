@@ -186,3 +186,34 @@ class DeadlineTests(unittest.TestCase):
         self.assertNotIn('deadline_data',(ROOT/'ver2/stages/stage_train.py').read_text(encoding='utf-8'))
         self.assertNotEqual(CONFIG['run_name'],CONFIG['source_run_name'])
         self.assertEqual(CONFIG['block_iters']*CONFIG['max_blocks'],3000)
+
+    def test_bootstrap_executes_and_keeps_fresh_git_commit_and_v2_defaults(self):
+        # Execute the actual generated cell; compilation alone cannot catch a missing CFG key.
+        import contextlib, io
+        nb=make_notebook()
+        fresh_commit='a'*40
+        for stale in (None,'b'*40):
+            with self.subTest(previous_commit=stale),tempfile.TemporaryDirectory() as tmp:
+                scope={}
+                exec(''.join(nb['cells'][0]['source']),scope)
+                scope['CFG'].update(project_dir=str(ROOT),output_root=tmp,profile='smoke',batch_size=24)
+                if stale:scope['CFG']['project_commit']=stale
+                def git_output(command,**kwargs):
+                    if command==['git','remote','get-url','origin']:
+                        return 'https://github.com/SongYunu/moveBoxes.git\n'
+                    self.assertEqual(command,['git','rev-parse','HEAD'])
+                    return fresh_commit+'\n'
+                previous_path=list(sys.path)
+                try:
+                    with patch('subprocess.run') as run,patch('subprocess.check_output',side_effect=git_output), \
+                         patch('importlib.reload',side_effect=lambda module:module),contextlib.redirect_stdout(io.StringIO()):
+                        exec(''.join(nb['cells'][1]['source']),scope)
+                    self.assertTrue(all(c.args[0][0]=='git' for c in run.call_args_list))
+                    self.assertEqual(scope['CFG']['project_commit'],fresh_commit)
+                    self.assertEqual(scope['experiment'].cfg['project_commit'],fresh_commit)
+                    self.assertEqual(scope['experiment'].cfg['batch_size'],24)
+                    self.assertEqual(scope['experiment'].cfg['position_noise'],0.)
+                    self.assertEqual(scope['experiment'].cfg['warmup_steps'],50)
+                    self.assertFalse(scope['experiment'].connected)
+                finally:
+                    sys.path[:]=previous_path
