@@ -78,6 +78,7 @@ class FoundationTests(unittest.TestCase):
             experiment=FoundationExperiment(cfg);experiment.signature=lambda:'fixed';experiment.sync=lambda:None
             write(experiment.run_dir/'state.json',dict(completed=0,best=None,latest=None,pending=None,history=[]))
             write(experiment.run_dir/'runtime_check.json',dict(signature='fixed'))
+            write(experiment.run_dir/'data_audit.json',{'coverage_windows':{'8':{'easy':1,'medium':1,'hard':1}}})
             def fake_run(command,log,**kwargs):
                 job=read(command[-1]);folder=Path(job['destination']);folder.mkdir(parents=True,exist_ok=True)
                 write(folder/'metadata.json',dict(step=job['stop']));(folder/'adapter.pt').write_bytes(b'model')
@@ -116,6 +117,25 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(batch['actions'].shape,(3,2,4,4))
         restored=action_to_env(normalize(batch['actions'],self.data.stats,'action'),self.data.stats)
         self.assertTrue(np.isfinite(restored).all());self.assertTrue((abs(restored)<=1).all())
+
+    @unittest.skipUnless(all((ROOT.parent/l/'trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5').exists() for l in LEVELS),'local RGB data unavailable')
+    def test_global_coverage_visits_every_training_window_once(self):
+        for chunk in (4,8):
+            expected=[(level,i,t) for level in LEVELS for i in self.data.ids[level]['train']
+                      for t in range(0,len(self.data.items[i]['actions']),chunk)]
+            actual=[self.data.global_coverage_item(chunk,draw) for draw in range(len(expected))]
+            self.assertEqual(len(actual),len(set(actual)))
+            self.assertEqual(set(actual),set(expected))
+            self.assertEqual(len(actual),sum(self.data.audit()['coverage_windows'][str(chunk)].values()))
+
+    def test_notebook_budgets_cover_the_complete_global_pass(self):
+        expected={'moveboxes_smolvla_colab.ipynb':(16808,3000,6),
+                  'moveboxes_octo_colab.ipynb':(33305,5700,6)}
+        for name,(windows,updates,effective_batch) in expected.items():
+            source=''.join(json.loads((ROOT/'foundation/notebooks'/name).read_text(encoding='utf-8'))['cells'][0]['source'])
+            self.assertIn(f"'updates': {updates}",source)
+            self.assertGreaterEqual(updates*effective_batch,windows)
+            self.assertLess((updates-1)*effective_batch,windows+effective_batch*200)
 
 
 if __name__=='__main__':unittest.main()

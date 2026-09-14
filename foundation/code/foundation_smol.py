@@ -90,6 +90,8 @@ def train(job):
         optimizer.load_state_dict(state['optimizer']);scaler.load_state_dict(state['scaler']);torch.set_rng_state(state['torch_rng'])
         if amp and state['cuda_rng'] is not None:torch.cuda.set_rng_state_all(state['cuda_rng'])
     language=tokens(model,cfg['micro_batch'],device);tick=last=time.monotonic()
+    effective_batch=cfg['micro_batch']*cfg['accumulate']
+    coverage_total=len(data.global_coverage_pool(cfg['chunk']))
     probe_name,probe_parameter=next((n,p) for n,p in model.named_parameters() if p.requires_grad and n.endswith('action_out_proj.weight'))
     probe_before=probe_parameter.detach().cpu().clone()
     if amp:torch.cuda.reset_peak_memory_stats()
@@ -97,8 +99,9 @@ def train(job):
     for step in range(start,job['stop']):
         training_mode(model);optimizer.zero_grad(set_to_none=True);loss_value=0.
         for micro in range(cfg['accumulate']):
-            levels=[LEVELS[(micro*cfg['micro_batch']+j)%3] for j in range(cfg['micro_batch'])]
-            batch=batch_to_torch(data.batch(levels,rng,1,cfg['chunk']),stats,device,language)
+            base=step*effective_batch+micro*cfg['micro_batch']
+            coverage_indices=list(range(base,base+cfg['micro_batch']))
+            batch=batch_to_torch(data.batch(None,rng,1,cfg['chunk'],coverage_indices=coverage_indices),stats,device,language)
             with torch.autocast(device_type='cuda',dtype=torch.float16,enabled=amp):loss=masked_loss(model,batch)
             if not torch.isfinite(loss):raise RuntimeError('Non-finite SmolVLA loss; previous checkpoint retained')
             scaler.scale(loss/cfg['accumulate']).backward();loss_value+=float(loss.detach())/cfg['accumulate']
@@ -122,6 +125,7 @@ def train(job):
     checkpoint_meta(dest,job,stats,job['stop'],rng)
     write(dest/'resource.json',dict(seconds=time.monotonic()-tick,updates=job['stop']-start,
         validation_by_level=dict(zip(LEVELS,validation)),parameter_delta_norm=parameter_delta,
+        coverage_windows=coverage_total,coverage_fraction=min(1.,job['stop']*effective_batch/coverage_total),
         max_gpu_gib=torch.cuda.max_memory_allocated()/2**30 if amp else None))
     data.close()
 

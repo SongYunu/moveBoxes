@@ -20,8 +20,7 @@ class FoundationExperiment:
         self.sim_python=self.envroot/'simulator/bin/python';self.repo=Path(cfg['simulator_repo'])
         self.data=Path(cfg['data_dir']);self.store=None
         if self.backend not in ('smol','octo'):raise ValueError('Unknown backend')
-        if cfg['micro_batch']*cfg['accumulate']%3:raise ValueError('Effective batch must include equal counts of all three levels')
-        if self.backend=='octo' and (cfg['micro_batch']%3 or cfg['accumulate']!=1):raise ValueError('Octo uses micro_batch divisible by 3, accumulate=1')
+        if cfg['micro_batch']<1 or cfg['accumulate']<1:raise ValueError('Batch and accumulation must be positive')
         if not 1<=cfg['execute_steps']<=cfg['chunk']:raise ValueError('Invalid execution horizon')
 
     def env(self,model=False):
@@ -74,6 +73,7 @@ class FoundationExperiment:
         state=read(self.run_dir/'state.json',{})
         checkpoint_folders=[]
         if state.get('best'):checkpoint_folders.append(self.run_dir/state['best']['folder'])
+        if state.get('latest'):checkpoint_folders.append(self.run_dir/state['latest'])
         if state.get('pending'):
             checkpoint_folders.append(self.run_dir/state['pending']['folder'])
             if state['pending'].get('checkpoint'):checkpoint_folders.append(self.run_dir/state['pending']['checkpoint'])
@@ -126,6 +126,11 @@ class FoundationExperiment:
             raise ValueError('Expected RGB track plus 26-D robot proprioception, without privileged state')
         print('다운로드: RGB archive 1개 · 모델 입력: 128×128 RGB + 26-D robot proprioception')
         print('별도 state archive의 54-D privileged state는 이 RGB 정책에서 사용하지 않습니다.')
+        counts=audit['coverage_windows'][str(self.cfg['chunk'])]
+        effective_batch=self.cfg['micro_batch']*self.cfg['accumulate']
+        required=(sum(counts.values())+effective_batch-1)//effective_batch
+        print('빈틈없는 train-window 수:',counts,'· 합계:',sum(counts.values()),'· 전체 1회 순회 필요 update:',required)
+        if self.cfg['updates']<required:raise ValueError(f'updates={self.cfg["updates"]} is below full-data coverage requirement {required}')
         for level,groups in audit['episodes'].items():print(level,{k:len(v) for k,v in groups.items()})
         self.sync()
 
@@ -198,9 +203,12 @@ class FoundationExperiment:
                 current=self.run_dir/state['latest'] if state.get('latest') else None
                 if current and not (current/'metadata.json').exists():current=self.run_dir/state['best']['folder'] if state.get('best') else None
                 start=read(current/'metadata.json')['step'] if current else 0
+                if state['completed']!=start:
+                    print('복원된 checkpoint 계보에 맞춰 학습 진행도를',state['completed'],'->',start,'로 조정합니다.',flush=True)
+                    state['completed']=start;state['latest']=current.relative_to(self.run_dir).as_posix() if current else None
                 # A new runtime continues from the compact best adapter with a fresh optimizer.
-                trained_updates=min(self.cfg['eval_interval'],self.cfg['updates']-state['completed'])
-                stop=start+trained_updates;dest=self.run_dir/'candidates'/f'update_{state["completed"]+trained_updates:06d}'
+                trained_updates=min(self.cfg['eval_interval'],self.cfg['updates']-start)
+                stop=start+trained_updates;dest=self.run_dir/'candidates'/f'update_{stop:06d}'
                 pending=dict(folder=dest.relative_to(self.run_dir).as_posix(),checkpoint=current.relative_to(self.run_dir).as_posix() if current else None,
                     start=start,stop=stop,trained_updates=trained_updates)
                 state['pending']=pending;write(self.run_dir/'state.json',state);self.sync()
@@ -211,9 +219,13 @@ class FoundationExperiment:
                 self.sync()
                 scores={level:self.evaluate(dest,level,list(range(520000,520000+self.cfg['dev_episodes'])),dest.name)['sort_accuracy'] for level in LEVELS}
                 score=sum(SCORE_WEIGHTS[level]*scores[level] for level in LEVELS)
-                if state['best'] is None or score>state['best']['score']:state['best']=dict(folder=dest.relative_to(self.run_dir).as_posix(),score=score,scores=scores)
-                state['completed']+=trained_updates;state['latest']=dest.relative_to(self.run_dir).as_posix();state['pending']=None
-                state['history'].append(dict(updates=state['completed'],scores=scores,weighted_score=score))
+                counts=read(self.run_dir/'data_audit.json')['coverage_windows'][str(self.cfg['chunk'])]
+                effective_batch=self.cfg['micro_batch']*self.cfg['accumulate']
+                required=(sum(counts.values())+effective_batch-1)//effective_batch
+                eligible=stop>=required
+                if eligible and (state['best'] is None or score>state['best']['score']):state['best']=dict(folder=dest.relative_to(self.run_dir).as_posix(),score=score,scores=scores)
+                state['completed']=stop;state['latest']=dest.relative_to(self.run_dir).as_posix();state['pending']=None
+                state['history'].append(dict(updates=state['completed'],scores=scores,weighted_score=score,full_data_eligible=eligible))
                 write(self.run_dir/'state.json',state);print('공동 학습',state['completed'],'/',self.cfg['updates'],scores,flush=True)
             finally:self.sync()
 

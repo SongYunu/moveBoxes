@@ -14,28 +14,28 @@ def cell(source):
 def config(backend):
     if backend=='smol':
         specific="""    'backend': 'smol',
-    'run_name': 'moveboxes_smolvla_rgb_v1',
+    'run_name': 'moveboxes_smolvla_rgb_full_v2',
     'micro_batch': 1,
-    'accumulate': 3,
+    'accumulate': 6,
     'chunk': 8,
     'execute_steps': 2,
     'inference_steps': 5,
     'image_size': 256,
     'lr': 1e-4,
-    'updates': 6000,
-    'eval_interval': 2000,"""
+    'updates': 3000,
+    'eval_interval': 1500,"""
     else:
         specific="""    'backend': 'octo',
-    'run_name': 'moveboxes_octo_small_rgb_v1',
+    'run_name': 'moveboxes_octo_small_rgb_full_v2',
     'micro_batch': 3,
-    'accumulate': 1,
+    'accumulate': 2,
     'chunk': 4,
     'execute_steps': 2,
     'inference_steps': 20,
     'image_size': 256,
     'lr': 3e-5,
-    'updates': 6000,
-    'eval_interval': 2000,"""
+    'updates': 5700,
+    'eval_interval': 1900,"""
     return f"""# 01 · {backend.upper()} 공동 학습 설정 (Easy + Medium + Hard RGB)
 CFG = {{
 {specific}
@@ -56,9 +56,9 @@ CFG = {{
     'simulator_commit': '6048f33217f26ae39009a812f53c81171517f393',
 }}
 
-assert CFG['micro_batch'] * CFG['accumulate'] % 3 == 0
+assert CFG['micro_batch'] > 0 and CFG['accumulate'] > 0
 print('백엔드:', CFG['backend'], '· 실효 배치:', CFG['micro_batch'] * CFG['accumulate'])
-print('한 모델에 Easy·Medium·Hard를 같은 비율로 넣습니다.')"""
+print('Easy·Medium·Hard의 모든 train window를 하나로 섞어 최소 한 번씩 학습합니다.')"""
 
 
 BOOTSTRAP="""# 02 · GitHub 코드 로드 (기존 폴더가 있으면 최신 project_ref로 갱신)
@@ -134,16 +134,16 @@ COMMON = {
     'notebook_name': 'moveboxes_foundation_both_colab.ipynb',
 }
 MODEL = {
-    'smol': dict(run_name='moveboxes_smolvla_rgb_v1',micro_batch=1,accumulate=3,
+    'smol': dict(run_name='moveboxes_smolvla_rgb_full_v2',micro_batch=1,accumulate=6,
                  chunk=8,execute_steps=2,inference_steps=5,image_size=256,
-                 lr=1e-4,updates=6000,eval_interval=2000),
-    'octo': dict(run_name='moveboxes_octo_small_rgb_v1',micro_batch=3,accumulate=1,
+                 lr=1e-4,updates=3000,eval_interval=1500),
+    'octo': dict(run_name='moveboxes_octo_small_rgb_full_v2',micro_batch=3,accumulate=2,
                  chunk=4,execute_steps=2,inference_steps=20,image_size=256,
-                 lr=3e-5,updates=6000,eval_interval=2000),
+                 lr=3e-5,updates=5700,eval_interval=1900),
 }
 CFGS = {name: dict(COMMON, backend=name, **MODEL[name]) for name in BACKENDS}
 for name,cfg in CFGS.items():
-    assert cfg['micro_batch']*cfg['accumulate']%3==0
+    assert cfg['micro_batch']>0 and cfg['accumulate']>0
     print(name,'· 실효 배치',cfg['micro_batch']*cfg['accumulate'],'·',cfg['updates'],'updates')
 print('두 모델을 섞어 평균내지 않고 각각 공동 학습한 뒤 0.2/0.3/0.5 점수로 비교합니다.')"""
     combined_bootstrap=BOOTSTRAP.replace("CFG['project_dir']","COMMON['project_dir']").replace("CFG['project_ref']","COMMON['project_ref']")
@@ -176,7 +176,7 @@ run_each('connect')"""
         "# 04 · SmolVLA(Python 3.12), Octo(Python 3.10), 시뮬레이터 환경 설치\ninstall_results,install_errors=run_each('install')",
         "# 05 · RGB 데이터는 한 번 내려받고, 두 실험에서 같은 분할을 각각 검증\ndata_results,data_errors=run_each('prepare')",
         "# 06 · 각 공개 초기값으로 3 update + Easy 1회 실제 동작 확인\n# 한 모델이 T4에서 실패해도 다른 모델 확인은 계속합니다.\ncheck_results,check_errors=run_each('check')",
-        "# 07 · 두 모델 순차 공동 학습; 2,000 update마다 각각 GitHub에 최고 adapter 저장\ntrain_results,train_errors=run_each('train')",
+        "# 07 · 두 모델 순차 공동 학습; 각 eval_interval마다 GitHub에 진행 adapter 저장\ntrain_results,train_errors=run_each('train')",
         "# 08 · 각 모델의 최고 adapter로 Easy 테스트\neasy_results,easy_errors=run_each('test','easy')",
         "# 09 · 각 모델의 최고 adapter로 Medium 테스트\nmedium_results,medium_errors=run_each('test','medium')",
         "# 10 · 각 모델의 최고 adapter로 Hard 테스트\nhard_results,hard_errors=run_each('test','hard')",

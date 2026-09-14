@@ -114,8 +114,7 @@ def train(job):
     checkpoint=job.get('checkpoint');meta=read(Path(checkpoint)/'metadata.json') if checkpoint else None
     if meta and meta['signature']!=job['signature']:raise ValueError('Training config/data/code changed; use a new run_name')
     stats=meta['stats'] if meta else data.stats
-    levels=list(LEVELS)*(cfg['micro_batch']//3)
-    raw=data.batch(levels,rng,2,4);raw['stats']=stats
+    raw=data.batch(None,rng,2,4,coverage_indices=range(cfg['micro_batch']));raw['stats']=stats
     model,mask,task=load(cfg,raw,checkpoint)
     labels=jax.tree_map(lambda x:'train' if x else 'frozen',mask)
     tx=optax.multi_transform({'train':optax.chain(optax.clip_by_global_norm(1.),optax.adamw(cfg['lr'],weight_decay=1e-4)),
@@ -131,18 +130,29 @@ def train(job):
         loss,_=bound.heads['action'].loss(embeddings,batch['action'],batch['observation']['timestep_pad_mask'],batch['action_pad_mask'],train=True)
         return loss
     @jax.jit
-    def update(params,opt_state,key,batch):
-        key,sub=jax.random.split(key);loss,grads=jax.value_and_grad(loss_fn)(params,batch,sub)
+    def gradients(params,key,batch):
+        return jax.value_and_grad(loss_fn)(params,batch,key)
+    @jax.jit
+    def apply_gradients(params,opt_state,grads):
         updates,opt_state=tx.update(grads,opt_state,params)
-        return optax.apply_updates(params,updates),opt_state,key,loss
+        return optax.apply_updates(params,updates),opt_state
     tick=last=time.monotonic();params=model.params
+    effective_batch=cfg['micro_batch']*cfg['accumulate']
+    coverage_total=len(data.global_coverage_pool(4))
     initial_flat=flax.traverse_util.flatten_dict(params);flat_flags=flax.traverse_util.flatten_dict(mask)
     probe_key=next(k for k,enabled in flat_flags.items() if enabled and 'action' in '/'.join(k) and initial_flat[k].ndim>1)
     probe_before=np.asarray(initial_flat[probe_key]).copy()
     print('Octo Small pretrained / JAX / updates',start,'->',job['stop'],flush=True)
     for step in range(start,job['stop']):
-        raw=data.batch(levels,rng,2,4);batch=make_batch(raw,stats,task)
-        params,opt_state,key,loss=update(params,opt_state,key,batch);value=float(loss)
+        total_grads=None;value=0.
+        for micro in range(cfg['accumulate']):
+            base=step*effective_batch+micro*cfg['micro_batch']
+            indices=list(range(base,base+cfg['micro_batch']))
+            raw=data.batch(None,rng,2,4,coverage_indices=indices);batch=make_batch(raw,stats,task)
+            key,sub=jax.random.split(key);loss,grads=gradients(params,sub,batch);value+=float(loss)/cfg['accumulate']
+            total_grads=grads if total_grads is None else jax.tree_map(lambda x,y:x+y,total_grads,grads)
+        total_grads=jax.tree_map(lambda x:x/cfg['accumulate'],total_grads)
+        params,opt_state=apply_gradients(params,opt_state,total_grads)
         if not np.isfinite(value):raise RuntimeError('Non-finite Octo loss; previous checkpoint retained')
         if time.monotonic()-last>=30 or step+1==job['stop']:
             print(f'{step+1}/{cfg["updates"]} loss={value:.4f} {(step+1-start)/(time.monotonic()-tick):.2f} update/s',flush=True);last=time.monotonic()
@@ -162,6 +172,7 @@ def train(job):
     memory=jax.devices()[0].memory_stats() or {}
     write(dest/'resource.json',dict(seconds=time.monotonic()-tick,updates=job['stop']-start,
         validation_by_level=validation,parameter_delta_norm=parameter_delta,
+        coverage_windows=coverage_total,coverage_fraction=min(1.,job['stop']*effective_batch/coverage_total),
         memory={k:int(v) for k,v in memory.items() if isinstance(v,(int,float))}))
     data.close()
 

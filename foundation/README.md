@@ -1,6 +1,6 @@
 # RGB foundation-model experiments
 
-Easy·Medium·Hard의 RGB 시연 600개를 한 모델에 같은 비율로 넣는 두 개의 독립 백엔드입니다.
+Easy·Medium·Hard의 RGB 시연 600개를 한 모델에 함께 넣는 두 개의 독립 백엔드입니다.
 세 노트북은 같은 데이터 분할과 공식 RGB 환경 평가를 사용하지만 모델 환경은 완전히 분리합니다.
 
 **권장 진입점:** [두 모델 통합 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/foundation/notebooks/moveboxes_foundation_both_colab.ipynb). 이 노트북 하나가
@@ -28,17 +28,24 @@ Colab에서 **Python 3.12 / T4**를 선택하고 01~06을 먼저 실행합니다
 임의로 바꾸지 말고, 두 모델을 함께 돌릴 때는 통합 노트북을 사용하세요.
 
 06번 셀은 공개 초기값 다운로드, 세 번의 실제 update, Easy 1회 rollout까지 수행합니다.
-메모리 부족이나 API 불일치는 여기서 학습 전에 드러납니다. 07번 셀은 2,000 update마다 고정된
+메모리 부족이나 API 불일치는 여기서 학습 전에 드러납니다. 07번 셀은 SmolVLA 1,500 update,
+Octo 1,900 update마다 고정된
 검증 seed로 세 난이도를 모두 평가하고 위 가중 분류율이 높은 adapter만 GitHub Release에 보존합니다.
 08~10은 그 **동일한 최고 adapter**를 Easy·Medium·Hard에서 각각 시험합니다.
 
-기본 6,000 update의 실제 시간은 최초 다운로드와 JAX 컴파일, T4 할당 상태에 따라 크게 달라집니다.
+학습 sampler는 각 에피소드를 action chunk 단위로 빈틈없이 나눈 뒤 세 난이도의 window를 전역으로
+섞어 순회합니다. SmolVLA는 16,808개 window를 실효 배치 6으로 3,000 update, Octo는 33,305개를
+실효 배치 6으로 5,700 update 학습합니다. 따라서 Easy·Medium·Hard의 모든 train action을 최소
+한 번 loss target으로 사용한 checkpoint만 최고 모델 후보가 됩니다. 데이터 양에 따른 자연 비율은
+대략 Easy 16%, Medium 32%, Hard 52%라서 Hard를 중시하는 공식 0.2/0.3/0.5 가중치에도 가깝습니다.
+
+실제 시간은 최초 다운로드와 JAX 컴파일, T4 할당 상태에 따라 크게 달라집니다.
 06번 셀의 `resource.json`이 해당 런타임의 update 시간과 최고 GPU 메모리를 기록합니다. 보수적으로
-SmolVLA는 약 3~7시간, Octo Small은 약 2~5시간을 잡되, 이는 이 저장소에서 아직 T4 실측 완료된
-수치가 아닙니다. Colab 종료에 대비해 2,000 update 경계의 최고 adapter와 평가 JSON을 Release로
+SmolVLA는 약 3~7시간, Octo Small은 약 4~10시간을 잡되, 이는 이 저장소에서 아직 T4 실측 완료된
+수치가 아닙니다. Colab 종료에 대비해 각 평가 경계의 진행 adapter와 평가 JSON을 Release로
 올립니다. 중간 optimizer는 같은 런타임에서만 이어지고, 새 런타임은 저장된 최고 adapter에서 새
 optimizer로 계속합니다.
-통합판을 전부 실행하면 두 예상 시간의 합과 설치·평가 시간이 필요해 5~12시간 이상 걸릴 수 있습니다.
+통합판을 전부 실행하면 두 예상 시간의 합과 설치·평가 시간이 필요해 7~18시간가량 걸릴 수 있습니다.
 
 버전은 모델과 코드뿐 아니라 의존성까지 고정합니다. 주요 원본은
 [SmolVLA checkpoint](https://huggingface.co/lerobot/smolvla_base),

@@ -42,7 +42,8 @@ class RGBData:
     """Keep only small state/action arrays in RAM; fetch RGB frames from H5 on demand."""
     def __init__(self,root,seed=42):
         import h5py
-        self.handles=[];self.items=[];self.ids={k:dict(train=[],valid=[]) for k in LEVELS};self.hashes={}
+        self.seed=seed;self.handles=[];self.items=[];self.ids={k:dict(train=[],valid=[]) for k in LEVELS};self.hashes={}
+        self._coverage={};self._orders={}
         for level in LEVELS:
             path=Path(root)/level/'trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5'
             self.hashes[level]=digest(path)
@@ -69,16 +70,59 @@ class RGBData:
     def close(self):
         for f in self.handles:f.close()
 
+    def coverage_pool(self,level,chunk,split='train'):
+        key=(level,chunk,split)
+        if key not in self._coverage:
+            self._coverage[key]=[(i,t) for i in self.ids[level][split]
+                for t in range(0,len(self.items[i]['actions']),chunk)]
+        return self._coverage[key]
+
+    def coverage_counts(self,chunk):
+        return {level:len(self.coverage_pool(level,chunk)) for level in LEVELS}
+
+    def global_coverage_pool(self,chunk,split='train'):
+        key=('*',chunk,split)
+        if key not in self._coverage:
+            self._coverage[key]=[(level,i,t) for level in LEVELS for i,t in self.coverage_pool(level,chunk,split)]
+        return self._coverage[key]
+
+    def global_coverage_item(self,chunk,draw,split='train'):
+        pool=self.global_coverage_pool(chunk,split);epoch,position=divmod(draw,len(pool))
+        key=('*',chunk,split,epoch)
+        if key not in self._orders:
+            self._orders[key]=np.random.default_rng(self.seed+700001+1009*chunk+epoch).permutation(len(pool))
+        order=self._orders[key]
+        return pool[int(order[position])]
+
+    def coverage_item(self,level,chunk,draw,split='train'):
+        pool=self.coverage_pool(level,chunk,split);epoch,position=divmod(draw,len(pool))
+        level_id=LEVELS.index(level)
+        key=(level,chunk,split,epoch)
+        if key not in self._orders:
+            self._orders[key]=np.random.default_rng(self.seed+100003*level_id+1009*chunk+epoch).permutation(len(pool))
+        order=self._orders[key]
+        return pool[int(order[position])]
+
     def audit(self):
         return dict(hashes=self.hashes,stats=self.stats,episodes={k:{s:[self.items[i]['name'] for i in ids] for s,ids in splits.items()}
             for k,splits in self.ids.items()},track='rgb',downloaded_archives=['rgb'],camera='scene_camera',resolution=[128,128],
             inputs=['scene_camera.rgb','agent.qpos','agent.qvel','extra.tcp_pose','extra.is_grasped'],
-            proprio_dim=26,privileged_state_dim=0,uses_privileged_state=False,action_dim=4)
+            proprio_dim=26,privileged_state_dim=0,uses_privileged_state=False,action_dim=4,
+            coverage_windows={str(chunk):self.coverage_counts(chunk) for chunk in (4,8)})
 
-    def batch(self,levels,rng,history,chunk,split='train'):
+    def batch(self,levels,rng,history,chunk,split='train',coverage_indices=None):
         rows=[]
-        for level in levels:
-            pool=self.pools[split][level];i,t=pool[int(rng.integers(len(pool)))];item=self.items[i]
+        if levels is None:
+            if coverage_indices is None:raise ValueError('Global coverage batches require indices')
+            resolved=[self.global_coverage_item(chunk,int(draw),split) for draw in coverage_indices]
+        else:
+            if coverage_indices is not None and len(coverage_indices)!=len(levels):raise ValueError('One coverage index is required per row')
+            resolved=[(level,*self.coverage_item(level,chunk,int(coverage_indices[row]),split)) if coverage_indices is not None
+                else (level,None,None) for row,level in enumerate(levels)]
+        for row_index,(level,i,t) in enumerate(resolved):
+            if i is None:
+                pool=self.pools[split][level];i,t=pool[int(rng.integers(len(pool)))]
+            item=self.items[i]
             times=np.arange(t-history+1,t+1);indices=times.clip(0)
             images=np.stack([item['images'][int(u)] for u in indices])
             actions=np.zeros((history,chunk,4),np.float32);mask=np.zeros((history,chunk),bool)
