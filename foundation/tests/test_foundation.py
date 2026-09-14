@@ -30,6 +30,7 @@ class FoundationTests(unittest.TestCase):
             self.assertTrue(all(c['cell_type']=='code' for c in book['cells']))
             source=''.join(book['cells'][0]['source'])
             self.assertIn(f"'backend': '{backend}'",source)
+            self.assertIn("sys.modules.pop('foundation.code.foundation_experiment',None)",''.join(book['cells'][1]['source']))
             for i,c in enumerate(book['cells']):compile(''.join(c['source']),f'{name}:{i+1}','exec')
         combined=json.loads((ROOT/'foundation/notebooks/moveboxes_foundation_both_colab.ipynb').read_text(encoding='utf-8'))
         self.assertEqual(len(combined['cells']),11)

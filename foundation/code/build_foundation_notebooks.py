@@ -62,7 +62,7 @@ print('한 모델에 Easy·Medium·Hard를 같은 비율로 넣습니다.')"""
 
 
 BOOTSTRAP="""# 02 · GitHub 코드 로드 (기존 폴더가 있으면 최신 project_ref로 갱신)
-import os, subprocess, sys
+import importlib, os, subprocess, sys
 from pathlib import Path
 
 PROJECT = Path(CFG['project_dir'])
@@ -72,6 +72,8 @@ subprocess.run(['git','fetch','origin',CFG['project_ref']],cwd=PROJECT,check=Tru
 subprocess.run(['git','checkout','--detach','FETCH_HEAD'],cwd=PROJECT,check=True)
 CFG['project_commit']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=PROJECT,text=True).strip()
 sys.path.insert(0,str(PROJECT))
+importlib.invalidate_caches()
+sys.modules.pop('foundation.code.foundation_experiment',None)
 from foundation.code.foundation_experiment import FoundationExperiment
 experiment=FoundationExperiment(CFG)
 print('사용 코드:',CFG['project_commit'])"""
