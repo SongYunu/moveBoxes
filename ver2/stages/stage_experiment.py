@@ -13,7 +13,8 @@ from build_github_notebook import CONFIG as LEGACY_CONFIG
 
 class StageExperiment(GitHubExperiment):
     def __init__(self, cfg, sources):
-        super().__init__(dict(LEGACY_CONFIG, **cfg), sources)
+        defaults = dict(action_training_mode='prior', repair_iters=2000, allow_zero_success_evaluation=False)
+        super().__init__(dict(LEGACY_CONFIG, **dict(defaults, **cfg)), sources)
 
     def connect(self):
         if self.connected:
@@ -77,7 +78,8 @@ class StageExperiment(GitHubExperiment):
         if not script.exists():
             raise FileNotFoundError('04 셀에서 단계 ACT 실행 코드를 설치하세요.')
         cfg = {k:self.cfg[k] for k in ('seed','batch_size','lr','save_freq','warmup_steps','kl_weight',
-            'position_noise','validation_batches','amp','console_interval_seconds','stage_loss_weight','gate_loss_weight')}
+            'position_noise','validation_batches','amp','console_interval_seconds','stage_loss_weight','gate_loss_weight',
+            'action_training_mode')}
         smoke = self.cfg['profile']=='smoke'
         cfg['total_iters'] = 100 if smoke else self.cfg['total_iters'][level]
         if smoke:
@@ -87,6 +89,10 @@ class StageExperiment(GitHubExperiment):
             source_sha256=hashlib.sha256(''.join(self.sources[n] for n in
                 ('act_v2_model.py','act_v2_data.py','stage_schema.py','stage_labels.py','stage_model.py','stage_data.py','stage_train.py')).encode()).hexdigest())
         recovery = folder/'collection/manifest.json'
+        initial = folder/'initial_model.pt'
+        if initial.exists():
+            from marso_experiment import digest
+            job.update(warm_start=str(initial), warm_start_sha256=digest(initial))
         if not smoke:
             manifest = read_json(recovery, {})
             if not manifest.get('complete'):
@@ -97,7 +103,7 @@ class StageExperiment(GitHubExperiment):
         folder.mkdir(parents=True, exist_ok=True)
         previous = read_json(folder/'stage_train_job.json')
         if (folder/'checkpoints/latest.pt').exists():
-            keys = ('model_config','train_config','num_demos','source_sha256','recovery_manifest_sha256')
+            keys = ('model_config','train_config','num_demos','source_sha256','recovery_manifest_sha256','warm_start_sha256')
             if not previous or any(previous.get(k)!=job.get(k) for k in keys):
                 raise ValueError('이 run_name의 저장된 학습 설정/코드와 다릅니다. 새 실험은 새 run_name을 사용하세요.')
             if (folder/'training_complete.json').exists():
@@ -149,6 +155,13 @@ class StageExperiment(GitHubExperiment):
                 print(f'[{level}] 먼저 이 난이도의 학습 셀을 실행하세요.')
                 return None
             folder = self.run_dir/level
+            if not self.cfg['allow_zero_success_evaluation']:
+                quick = self.test(level)
+                if quick['sort_accuracy'] <= 0:
+                    save_json(folder/'evaluation_gate.json', dict(passed=False, reason='zero_correct_in_quick_test',
+                        checkpoint=str(candidate[0]), checkpoint_sha256=self.checkpoint_hash(candidate[0])))
+                    print(f'[{level}] 빠른 테스트 정답 분류 0: 긴 튜닝/100회 평가는 실행하지 않습니다. 진단을 확인하세요.')
+                    return None
             trials, hashes = [], set()
             for name in ('best_val.pt','latest.pt'):
                 ck = folder/'checkpoints'/name
@@ -162,6 +175,10 @@ class StageExperiment(GitHubExperiment):
                     policy = dict(candidate[1], ensemble_window=window)
                     trials.append(self._trial(level, ck, policy, self.seeds(True), f'tune_{ck.stem}_w{window}'))
             winner = max(trials,key=lambda r:r['score'])
+            if winner['score'] <= 0 and not self.cfg['allow_zero_success_evaluation']:
+                save_json(folder/'evaluation_gate.json', dict(passed=False, reason='zero_correct_in_tuning', trials=trials))
+                print(f'[{level}] 모든 튜닝 결과가 0: 최종 100회 평가는 실행하지 않습니다.')
+                return None
             save_json(folder/'selection.json', dict(selected=winner,trials=trials,tuning_seeds=self.seeds(True)))
             save_json(folder/'checkpoints/policy_config.json', winner['policy_config'])
             self._trial(level, Path(winner['checkpoint']), winner['policy_config'], self.seeds(False), 'metrics')
@@ -169,6 +186,51 @@ class StageExperiment(GitHubExperiment):
             if self.cfg['record_eval_video']:
                 self.record_video(level)
             return read_json(folder/'metrics.json')
+
+    def repair(self, level):
+        """Reuse old successful collection and weights in a separate prior-only run."""
+        import copy, shutil
+        from marso_experiment import digest
+        self._ready()
+        assert level in LEVELS
+        source = self.run_dir/level
+        previous = read_json(source/'stage_train_job.json')
+        manifest = read_json(source/'collection/manifest.json', {})
+        checkpoint = source/'checkpoints/latest.pt'
+        if not previous or not checkpoint.exists() or not manifest.get('complete'):
+            raise RuntimeError(f'[{level}] 보정할 기존 모델/성공 시연이 없습니다. 기존 run_name으로 03 셀에서 복원하세요.')
+        cfg = copy.deepcopy(self.cfg)
+        cfg.update(run_name=self.cfg['run_name']+'_prior_fix_v1', action_training_mode='prior',
+                   save_freq=500, warmup_steps=100)
+        cfg.update({k:v for k,v in previous['model_config'].items() if k != 'state_dim'})
+        cfg['total_iters'] = {k:self.cfg['repair_iters'] for k in LEVELS}
+        child = type(self)(cfg, self.sources)
+        child.connect()
+        child._stage_helpers()
+        target = child.run_dir/level
+        target.mkdir(parents=True, exist_ok=True)
+        with child.persist_operation(level):
+            for entry in manifest['episodes']:
+                path = source/'collection'/entry['file']
+                if path.resolve().parent != (source/'collection').resolve() or digest(path) != entry['sha256']:
+                    raise ValueError('Saved collection digest/path mismatch')
+            pairs = [(checkpoint, target/'initial_model.pt')]
+            pairs += [(p,target/'collection'/p.name) for p in (source/'collection').iterdir() if p.suffix in ('.json','.npz')]
+            for src,dst in pairs:
+                if dst.exists():
+                    if digest(src) != digest(dst):
+                        raise ValueError('Existing repair input differs; use a separate run_name')
+                else:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src,dst)
+            save_json(target/'repair_origin.json', dict(run=str(self.run_dir), checkpoint=str(checkpoint),
+                checkpoint_sha256=digest(checkpoint), objective='supervise zero-latent deployment actions'))
+        print(f'[{level}] 기존 성공 시연 재사용 → 별도 보정 학습 {cfg["total_iters"][level]}회 → 빠른 테스트')
+        child.train(level)
+        child.test(level)
+        child.diagnose(level)
+        print('보정 결과:', child.run_dir, '/ 성공 확인 뒤 fixed.evaluate(level)로 최종 평가하세요.')
+        return child
 
 
     def collect(self, level):

@@ -18,10 +18,10 @@ from stage_model import StageACT
 from stage_data import load_data, split_data, StageWindows
 from stage_teacher import CorrectiveTeacher
 from stage_collect import collect_episode
-from stage_train import train
+from stage_train import train, training_forward
 from stage_runtime_check import run_checks
 from stage_experiment import StageExperiment, source_bundle
-from build_stage_notebook import CONFIG, make_notebook
+from build_stage_notebook import CONFIG, make_notebook, make_repair_notebook
 
 
 def state():
@@ -40,6 +40,21 @@ class StageTests(unittest.TestCase):
 
     def test_shapes_backward_checkpoint_reset_all_levels(self):
         run_checks()
+
+    def test_training_action_path_matches_execution_and_does_not_read_expert_future(self):
+        model=StageACT(dict(state_dim=54,history=4,chunk_size=16,width=32,heads=4,layers=1,latent_dim=8))
+        batch=dict(obs=torch.zeros(2,4,54),previous_stage=torch.zeros(2,dtype=torch.long),
+                   stage=torch.zeros(2,dtype=torch.long),actions=torch.randn(2,16,4),mask=torch.ones(2,16))
+        first=training_forward(model,batch,dict(action_training_mode='prior'))[0]
+        batch['actions'] *= 100
+        second=training_forward(model,batch,dict(action_training_mode='prior'))[0]
+        x,memory,_,_=model.encode(batch['obs'],batch['previous_stage'])
+        actual,_=model.decode(x,memory,batch['stage'])
+        torch.testing.assert_close(first,second,atol=0,rtol=0)
+        torch.testing.assert_close(first,actual,atol=0,rtol=0)
+        first.square().mean().backward()
+        self.assertTrue(all(p.grad is None for p in model.posterior.parameters()))
+        self.assertIsNotNone(model.obs_proj.weight.grad)
 
     def test_gate_holds_until_confident_and_clears_old_chunk_on_recovery(self):
         class Controlled(torch.nn.Module):
@@ -184,6 +199,13 @@ class StageTests(unittest.TestCase):
         sources=source_bundle()
         for name,code in sources.items():
             compile(code,name,'exec')
+        repair=make_repair_notebook()
+        self.assertEqual(len(repair['cells']),12)
+        for c in repair['cells']:
+            compile(''.join(c['source']),'repair','exec')
+        scope={}
+        exec(''.join(repair['cells'][0]['source']),scope)
+        self.assertEqual(scope['CFG']['run_name'],'moveboxes_stage_act_v1')
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             cfg=dict(CONFIG,profile='smoke',output_root=str(root/'runs'),repo_dir=str(root/'repo'),
@@ -212,6 +234,43 @@ class StageTests(unittest.TestCase):
                 self.assertIn('from stage_model import StageACT',archive.read('colab_policy.py').decode())
                 submission=json.loads(archive.read('submission.yaml'))
                 self.assertEqual(set(submission['state']['levels']),{'easy','medium','hard'})
+
+    def test_zero_quick_test_stops_expensive_evaluation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg=dict(CONFIG,profile='smoke',output_root=directory,project_dir=str(ROOT))
+            exp=StageExperiment(cfg,source_bundle());exp.connect()
+            ck=exp.run_dir/'easy/checkpoints/latest.pt';ck.parent.mkdir(parents=True);ck.write_bytes(b'fixture')
+            with patch.object(exp,'_saved_final',return_value=None), \
+                 patch.object(exp,'_test_candidate',return_value=(ck,exp.policy_config('easy'))), \
+                 patch.object(exp,'test',return_value=dict(sort_accuracy=0)), \
+                 patch.object(exp,'_trial') as trial:
+                self.assertIsNone(exp.evaluate('easy'))
+                trial.assert_not_called()
+            self.assertFalse(json.loads((exp.run_dir/'easy/evaluation_gate.json').read_text())['passed'])
+
+    def test_repair_reuses_data_and_weights_in_an_isolated_run(self):
+        from marso_experiment import digest
+        with tempfile.TemporaryDirectory() as directory:
+            cfg=dict(CONFIG,run_name='original',profile='smoke',output_root=str(Path(directory)/'runs'),
+                     repo_dir=str(Path(directory)/'repo'),project_dir=str(ROOT))
+            exp=StageExperiment(cfg,source_bundle());exp.connect();exp.repo.mkdir()
+            source=exp.run_dir/'easy'
+            (source/'checkpoints').mkdir(parents=True)
+            (source/'checkpoints/latest.pt').write_bytes(b'original-checkpoint')
+            (source/'stage_train_job.json').write_text(json.dumps(dict(model_config=exp.model_config('easy'))))
+            collection=source/'collection';collection.mkdir()
+            episode=collection/'episode.npz';episode.write_bytes(b'original-episode')
+            manifest=dict(complete=True,episodes=[dict(file=episode.name,sha256=digest(episode))])
+            (collection/'manifest.json').write_text(json.dumps(manifest))
+            with patch.object(StageExperiment,'train') as training, \
+                 patch.object(StageExperiment,'test'),patch.object(StageExperiment,'diagnose'):
+                fixed=exp.repair('easy')
+                training.assert_called_once_with('easy')
+            self.assertNotEqual(fixed.run_dir,exp.run_dir)
+            self.assertEqual(fixed.cfg['action_training_mode'],'prior')
+            self.assertEqual((fixed.run_dir/'easy/initial_model.pt').read_bytes(),b'original-checkpoint')
+            self.assertEqual((fixed.run_dir/'easy/collection/episode.npz').read_bytes(),b'original-episode')
+            self.assertFalse((source/'repair_origin.json').exists())
 
 
 if __name__ == '__main__':

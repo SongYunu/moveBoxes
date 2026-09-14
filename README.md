@@ -1,5 +1,8 @@
 # moveBoxes
 
+**단계 v1에서 첫 집기 실패가 발생한 경우:** [보정용 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_stage_repair_colab.ipynb)의 01~06을 실행하세요.
+기존 모델·성공 시연을 재사용해 실행 조건으로 2,000회 보정 학습하고 테스트합니다. [원인과 검증 기록](ver2/stages/PRIOR_FIX.md).
+
 **새 단계 ACT 버전:** [Colab에서 열기](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_stages_colab.ipynb) · [실행 순서와 변경 사항](ver2/stages/README.md).
 집기·운반·놓기의 완료/복구 판단을 학습하고, 복구 시연 수집·학습·테스트를 난이도별로 실행합니다.
 기존 DP와 ACT ver2 파일 및 결과는 그대로 유지합니다.

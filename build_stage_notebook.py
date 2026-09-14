@@ -3,16 +3,19 @@ import json
 from pathlib import Path
 from build_act_v2_notebook import CONFIG as ACT_CONFIG, GROUPS, make_notebook as act_notebook
 
-CONFIG = dict(ACT_CONFIG, run_name='moveboxes_stage_act_v1', gate_threshold=.65, stage_threshold=.6,
+CONFIG = dict(ACT_CONFIG, run_name='moveboxes_stage_act_v2', gate_threshold=.65, stage_threshold=.6,
     stage_loss_weight=.3, gate_loss_weight=.3, recovery_episodes=16, recovery_max_attempts=48,
     recovery_seed_start=100000, collection_max_steps=dict(easy=500,medium=900,hard=1400),
-    noise_probability=.08, action_noise_std=.12, drop_probability=.015)
+    noise_probability=.08, action_noise_std=.12, drop_probability=.015, action_training_mode='prior',
+    repair_iters=2000, allow_zero_success_evaluation=False)
 
 
 def make_notebook(config=None):
     cfg = dict(CONFIG, **(config or {}))
     nb = act_notebook(cfg)
     groups = list(GROUPS)+[
+        ('실행 조건으로 행동 학습 · 빠른 테스트가 0이면 긴 평가 생략',
+         ['action_training_mode','repair_iters','allow_zero_success_evaluation']),
         ('단계 판단 · 학습된 완료/복구 확신이 낮으면 현재 단계 유지',
          ['gate_threshold','stage_threshold','stage_loss_weight','gate_loss_weight']),
         ('복구 시연 · 수집 전용 expert, 학습/제출은 학습된 정책',
@@ -52,10 +55,30 @@ def make_notebook(config=None):
     return nb
 
 
+def make_repair_notebook():
+    nb = make_notebook(dict(run_name='moveboxes_stage_act_v1'))
+    nb['cells'] = nb['cells'][:5]
+    nb['cells'][0]['source'].insert(0, '# 기존 실패 실험을 복원합니다. 보정 결과는 별도 _prior_fix_v1 Release에 저장됩니다.\n')
+    for level in ('easy','medium','hard'):
+        for title,body in [
+            ('기존 모델/시연 재사용 → 보정 학습 → 8회 테스트/진단',f'fixed_{level} = experiment.repair("{level}")'),
+            ('빠른 테스트 성공 확인 후 튜닝/최종 평가',f'fixed_{level}.evaluate("{level}")')]:
+            number = len(nb['cells'])+1
+            text = f'# {number:02d} · {level.upper()} · {title}\n{body}\n'
+            nb['cells'].append(dict(cell_type='code',execution_count=None,metadata={'id':f'repair-{number}'},
+                                    outputs=[],source=text.splitlines(keepends=True)))
+    text = ('# 12 · 보정 결과 보기 / 평가 완료 모델 패키징\n'
+            'completed = [globals()["fixed_"+level] for level in ("easy","medium","hard") if "fixed_"+level in globals()]\n'
+            'if completed:\n    completed[-1].show_results()\n    completed[-1].package()\n')
+    nb['cells'].append(dict(cell_type='code',execution_count=None,metadata={'id':'repair-12'},outputs=[],source=text.splitlines(keepends=True)))
+    nb['metadata']['colab']['name'] = 'moveboxes_stage_repair_colab.ipynb'
+    return nb
+
+
 if __name__ == '__main__':
-    nb = make_notebook()
-    for i,c in enumerate(nb['cells']):
-        compile(''.join(c['source']), f'stage-cell-{i+1}', 'exec')
-    path = Path(__file__).parent/'notebooks/moveboxes_stages_colab.ipynb'
-    path.write_text(json.dumps(nb, ensure_ascii=False, indent=2), encoding='utf-8')
-    print(path.name, len(nb['cells']), 'code cells')
+    for nb in (make_notebook(),make_repair_notebook()):
+        for i,c in enumerate(nb['cells']):
+            compile(''.join(c['source']), f'stage-cell-{i+1}', 'exec')
+        path = Path(__file__).parent/'notebooks'/nb['metadata']['colab']['name']
+        path.write_text(json.dumps(nb, ensure_ascii=False, indent=2), encoding='utf-8')
+        print(path.name, len(nb['cells']), 'code cells')

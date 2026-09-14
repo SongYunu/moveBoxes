@@ -19,6 +19,17 @@ def atomic_save(path, value):
     os.replace(str(path)+'.tmp', path)
 
 
+def training_forward(model, batch, cfg):
+    # The executed policy has no access to future expert actions. Train that same
+    # zero-latent path directly; a low posterior loss did not train this path.
+    mode = cfg.get('action_training_mode', 'prior')
+    if mode == 'prior':
+        return model(batch['obs'], batch['previous_stage'], batch['stage'])
+    if mode == 'posterior':  # Explicit legacy reproduction only.
+        return model(batch['obs'], batch['previous_stage'], batch['stage'], batch['actions'], batch['mask'])
+    raise ValueError(f'Unknown action_training_mode: {mode}')
+
+
 @torch.no_grad()
 def validate(model, data, cfg, device):
     model.eval()
@@ -52,7 +63,8 @@ def train(job):
     val_data = StageWindows(trajectories, val_ids, arch['history'], arch['chunk_size'], training=False)
     signature = dict(model_config=arch, train_config=cfg, data_sha256=digest(job['data']),
                      train_ids=train_ids, val_ids=val_ids, source_sha256=job['source_sha256'],
-                     recovery_sha256=digest(job['recovery_manifest']) if job.get('recovery_manifest') else None)
+                     recovery_sha256=digest(job['recovery_manifest']) if job.get('recovery_manifest') else None,
+                     warm_start_sha256=digest(job['warm_start']) if job.get('warm_start') else None)
     save_json(folder/'data_audit.json', dict(
         train_trajectories=[trajectories[i]['name'] for i in train_ids],
         validation_trajectories=[trajectories[i]['name'] for i in val_ids],
@@ -63,6 +75,7 @@ def train(job):
         labeling='base: weak geometric labels; collection: observed state + exact grasp flag',
         supervisor_memory_augmentation='25% alternate previous-stage inputs; action/observation targets unchanged',
         chunk_masking='stop at stage/parcel boundaries and first perturbed executed action',
+        action_training_mode=cfg.get('action_training_mode','prior'),
         raw_xyz_outside_action_bounds_fraction=sum(t['clipped_fraction'] for t in trajectories)/len(trajectories),
         soft_gripper_fraction=sum(t['soft_gripper_fraction'] for t in trajectories)/len(trajectories),
         gripper_labels='(clip(g,-1,1)+1)/2 soft BCE labels; latest inference logit chooses open/close',
@@ -72,6 +85,13 @@ def train(job):
     mean, std = normalization(trajectories, train_ids)
     model.obs_mean.copy_(mean)
     model.obs_std.copy_(std)
+    if job.get('warm_start'):
+        initial = torch.load(job['warm_start'], map_location='cpu', weights_only=True)
+        if initial.get('format') != 'moveboxes-stage-act-v1' or initial['model_config'] != arch:
+            raise ValueError('Warm-start checkpoint architecture/format mismatch')
+        model.load_state_dict(initial['model'])
+        # Keep the saved normalization with the saved weights.
+        print(f"보정 학습: 기존 {initial.get('step','?')} step 모델에서 시작, optimizer는 새로 초기화", flush=True)
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['lr'], weight_decay=1e-4)
     amp = bool(cfg['amp'] and device.type == 'cuda')
@@ -108,7 +128,7 @@ def train(job):
         batch = train_data.batch(cfg['batch_size'], generator, device, cfg['position_noise'])
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast(device_type=device.type, enabled=amp):
-            outputs = model(batch['obs'], batch['previous_stage'], batch['stage'], batch['actions'], batch['mask'])
+            outputs = training_forward(model, batch, cfg)
             loss, parts = stage_loss(outputs, batch['actions'], batch['mask'], batch['stage'], batch['gate'], cfg)
         if not torch.isfinite(loss):
             raise RuntimeError('Non-finite training loss; last complete checkpoint is retained.')
