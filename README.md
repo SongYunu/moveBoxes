@@ -1,9 +1,14 @@
 # moveBoxes
 
+**새 공동 학습 모델:** [Object Attention Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_joint_scratch_colab.ipynb) · [실행 안내](unified/JOINT.md).
+Easy·Medium·Hard state 시연 전체를 처음부터 섞어, 모든 상자를 attention으로 보는 모델 하나를 학습합니다.
+약 117만 파라미터, T4용 배치 32. **01~06 준비 → 07 공동 학습 → 08~10 난이도별 테스트**입니다.
+원본 데이터 CPU 학습·로딩 테스트는 통과했으며 새 모델의 실제 T4 성공률은 아직 측정하지 않았습니다. 아래 버전들은 이전 실험 기록입니다.
+
 **기존 Medium 40.6% 모델을 Easy에 평가:** [학습 없는 별도 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_medium_block02_easy_test.ipynb) · [설명](unified/MEDIUM_PROBE.md).
 원본 `block_02.pt`를 그대로 로드하고 Easy의 없는 상자 입력만 패딩합니다. 01~05 준비 → 06 Easy 평가.
 
-**지금은 Medium부터: [Medium 집중 학습 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_unified_medium_colab.ipynb)** · [설명](unified/MEDIUM.md).
+**이전 Medium 집중 학습: [Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_unified_medium_colab.ipynb)** · [설명](unified/MEDIUM.md).
 v2에서 Easy 100%를 낸 실제 PT를 그대로 가져와 Medium 20,000회 학습합니다.
 기존 부분 성공 시연 32개와 원본 데이터를 재사용하며, Easy 성능 저하로 Medium 학습을 중단하지 않습니다.
 01~06 준비 → 07 학습 → 08 테스트. 기존 Easy 원본과 최고 Medium 모델을 따로 보관합니다.
