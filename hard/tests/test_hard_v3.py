@@ -11,6 +11,7 @@ for path in (ROOT,ROOT/'ver2',ROOT/'ver2/stages',ROOT/'hard/code'):
 from stage_model import StageACT
 from hard_transfer import feature_pairs,transplant
 from build_hard_v3_notebook import make_notebook
+from build_hard_v31_notebook import make_notebook as make_v31_notebook
 
 
 def arch(dim):
@@ -40,6 +41,14 @@ class HardV3Test(unittest.TestCase):
         text=''.join(''.join(c['source']) for c in notebook['cells'])
         self.assertIn('HardV3',text);self.assertIn('experiment.test("hard")',text)
         self.assertNotIn('experiment.test("easy")',text)
+
+    def test_v31_uses_only_medium_and_tests_before_training(self):
+        notebook=make_v31_notebook()
+        for i,cell in enumerate(notebook['cells']):compile(''.join(cell['source']),str(i),'exec')
+        text=''.join(''.join(c['source']) for c in notebook['cells'])
+        self.assertIn("'transfer_donors': {'medium': 'moveboxes_medium_zfocus_v22'}",text)
+        self.assertIn('HardV31',text)
+        self.assertLess(text.index('experiment.test_transfer()'),text.index('experiment.run_blocks()'))
 
 
 if __name__=='__main__':unittest.main()

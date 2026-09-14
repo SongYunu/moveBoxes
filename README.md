@@ -9,6 +9,9 @@
 **Hard v3 권장:** [Easy/Medium 전이 재학습 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/hard/notebooks/moveboxes_hard_v3_colab.ipynb).
 Easy와 Medium 최고 모델을 Hard 입력으로 각각 변환해 먼저 비교하고, 더 나은 시작점 하나만 기존 Hard 성공 시연으로 짧게 보정합니다.
 
+**Medium만 베이스로 쓸 때:** [Hard v3.1 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/hard/notebooks/moveboxes_hard_v31_colab.ipynb).
+Easy는 읽지 않으며, 06 셀에서 재학습 전 Medium 직접 전이를 먼저 시험합니다. 07 보정 학습은 선택 사항입니다.
+
 **Medium v2.2:** [집기 높이 보정 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/medium/notebooks/moveboxes_medium_v22_colab.ipynb) · [실행 안내](medium/docs/V22.md).
 v2.1의 모델과 32개 성공 시연을 재사용하고, 단계 판정을 고정한 채 집기 Z축과 그리퍼 타이밍만 짧게 보정합니다.
 

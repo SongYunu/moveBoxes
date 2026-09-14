@@ -60,8 +60,11 @@ class HardV3(HardV2):
         super().prepare();folder=self.run_dir/'hard'
         donors=[]
         with self.persist_operation('hard'):
-            for level,key in (('easy','easy_source_run_name'),('medium','medium_source_run_name')):
-                donors.append(self._download_donor(level,self.cfg[key]))
+            configured=self.cfg.get('transfer_donors') or {
+                'easy':self.cfg['easy_source_run_name'],'medium':self.cfg['medium_source_run_name']}
+            for level,run_name in configured.items():
+                if level not in ('easy','medium'):raise ValueError('Transfer donor must be easy or medium')
+                donors.append(self._download_donor(level,run_name))
             job=dict(data=str(self.data/'hard/trajectory.state.pd_ee_delta_pos.physx_cuda.h5'),
                 recovery_manifest=str(folder/'collection/manifest.json'),num_demos=self.cfg['num_demos'],seed=self.cfg['seed'],
                 model_config=self.model_config('hard'),report=str(folder/'transfer_report.json'),donors=[])
@@ -77,7 +80,8 @@ class HardV3(HardV2):
         folder=self.run_dir/'hard';selection=read_json(folder/'transfer_selection.json')
         if selection:return selection
         trials=[]
-        for level in ('easy','medium'):
+        donors=read_json(folder/'transfer_sources.json',[])
+        for level in (item['level'] for item in donors):
             checkpoint=folder/'checkpoints'/f'from_{level}.pt'
             if not checkpoint.exists():raise RuntimeError('먼저 05 준비 셀을 실행하세요')
             trial=self._trial('hard',checkpoint,self.policy_config('hard'),self.seeds(True),f'transfer_{level}')
@@ -90,6 +94,14 @@ class HardV3(HardV2):
         save_json(folder/'lab_best.json',winner)
         print(f"전이 시작점: {winner['source_level']} · 첫 집기 {winner['first_grasp_rate']:.0%} · 분류 {winner['score']:.1%}")
         return selection
+
+    def test_transfer(self):
+        """Select and preserve the untouched transplant before any Hard optimization."""
+        self._ready();self._stage_helpers()
+        with self.persist_operation('hard'):selection=self._select_transfer()
+        chosen=selection['selected']
+        print(f"직접 전이: {chosen['source_level']} · 첫 집기 {chosen['first_grasp_rate']:.0%} · 분류 {chosen['score']:.1%}")
+        return self.test('hard')
 
     def training_job(self):
         job=super().training_job();selection=read_json(self.run_dir/'hard/transfer_selection.json')

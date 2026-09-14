@@ -8,6 +8,10 @@ Colab 2026.07 / Python 3.12 / T4에서 실행합니다.
 첫 집기와 분류 점수를 비교합니다. 더 나은 한 모델만 골라 기존 Hard 성공/복구 시연 24개로 최대
 6,000회 저학습률 보정합니다. 실패한 Hard v1/v2 결과와 Release는 그대로 보존합니다.
 
+재학습으로 동작이 무너지는지 먼저 확인하려면 [Hard v3.1 Medium 베이스 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/hard/notebooks/moveboxes_hard_v31_colab.ipynb)을 사용합니다.
+이 버전은 Easy를 사용하지 않습니다. Medium 최고 모델을 Hard 입력으로 확장한 뒤 06 셀에서 그대로 시험하고,
+괜찮을 때만 07 셀에서 최대 1,500회 보정합니다.
+
 Hard v3는 별도 실행 `moveboxes_hard_transfer_v3`과 별도 GitHub Release를 사용합니다. 기존 Easy와 Medium
 결과를 읽기만 하며 변경하지 않습니다. 전이 이후 보정 학습과 평가는 Hard에만 실행합니다.
 
