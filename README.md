@@ -1,5 +1,8 @@
 # moveBoxes
 
+**공개 사전학습 모델을 쓰는 RGB 공동 학습:** [SmolVLA + Octo 통합 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/foundation/notebooks/moveboxes_foundation_both_colab.ipynb) · [설명](foundation/README.md).
+각 모델은 Easy·Medium·Hard RGB 시연 600개를 처음부터 함께 보며, 같은 최고 adapter 하나를 세 난이도에서 평가합니다. 모델과 시뮬레이터 의존성은 서로 다른 Python 환경에 격리했습니다.
+
 **새 공동 학습 모델:** [Object Attention Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_joint_scratch_colab.ipynb) · [실행 안내](unified/JOINT.md).
 Easy·Medium·Hard state 시연 전체를 처음부터 섞어, 모든 상자를 attention으로 보는 모델 하나를 학습합니다.
 약 117만 파라미터, T4용 배치 32. **01~06 준비 → 07 공동 학습 → 08~10 난이도별 테스트**입니다.
