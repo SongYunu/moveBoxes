@@ -1,0 +1,9 @@
+{
+  "easy_snapshot": "snapshot-common-01789385121345482832-377f326c76f55741ea143187e17cd06786a08045375cfa8099f962ad0d909a91.json",
+  "easy_checkpoint_sha256": "7a25c5a68dae13607cf9b9e798d89d5b2a8bda7964393e52d028b6a6982a2435",
+  "easy_score": 1.0,
+  "medium_snapshot": "snapshot-medium-01789371031530077773-3142b96cbfe5eda11549dfc4ca6de6eab53c02c109813c5fe58e0c6922aa9534.json",
+  "episodes": 32,
+  "full_successes": 0,
+  "full_success_action_counts": []
+}

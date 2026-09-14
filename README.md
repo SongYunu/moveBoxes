@@ -1,6 +1,11 @@
 # moveBoxes
 
-**현재 실행할 버전: [공유 모델 v2 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_unified_v2_colab.ipynb)** · [실행 순서·수정 내용](unified/V2.md).
+**지금은 Medium부터: [Medium 집중 학습 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_unified_medium_colab.ipynb)** · [설명](unified/MEDIUM.md).
+v2에서 Easy 100%를 낸 실제 PT를 그대로 가져와 Medium 20,000회 학습합니다.
+기존 부분 성공 시연 32개와 원본 데이터를 재사용하며, Easy 성능 저하로 Medium 학습을 중단하지 않습니다.
+01~06 준비 → 07 학습 → 08 테스트. 기존 Easy 원본과 최고 Medium 모델을 따로 보관합니다.
+
+**이전 공유 모델 v2: [Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/unified/notebooks/moveboxes_unified_v2_colab.ipynb)** · [실행 순서·수정 내용](unified/V2.md).
 기존 최종 Easy 100/100 성공 체크포인트에서 시작해 같은 모델을 Medium → Hard까지 이어 학습합니다.
 실패 관련 전문가 시간 구간을 집중 표집하고 이전 데이터를 재사용합니다. 학습 모델은 구간 사이에
 optimizer와 난수 상태까지 이어가며, 최고 성적 모델은 따로 보존합니다. 01~06 준비 → 07~08 Easy 확인부터 실행하세요.
