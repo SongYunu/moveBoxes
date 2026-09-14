@@ -1,5 +1,8 @@
 # moveBoxes
 
+**Medium v2.1:** [부분 성공 학습 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_v21_colab.ipynb) · [실행 안내](MEDIUM_V21.md).
+3개 분류 시연도 학습하고, 네 상자 완주 시연에만 속도 가중치를 줍니다. 시연 32개·최대 12,000회 보정입니다.
+
 **Medium v2:** [별도 Colab 노트북](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/notebooks/moveboxes_medium_v2_colab.ipynb) · [실행 안내](MEDIUM_V2.md).
 199행동 내 성공 시연을 먼저 시험하고, 기존 최고 모델을 최대 3,000회 보정합니다. 결과는 별도 Release에 저장합니다.
 
