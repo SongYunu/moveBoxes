@@ -119,6 +119,16 @@ class UnifiedMedium(UnifiedV2):
         self._ready();_,current=self._current()
         with self.persist_operation('medium'):self._evaluate('medium',current,'metrics',self.seeds(False))
 
+    def test_medium_on_easy(self):
+        self._ready();state,current=self._current()
+        accepted=[row for row in state['history'] if row['level']=='medium' and row['accepted']]
+        if not accepted or state['checkpoint']==state.get('easy_reference'):
+            print('아직 채택된 Medium 학습 모델이 없습니다. 현재 선택된 것은 초기 Easy 모델입니다. 07 학습 결과를 먼저 확인하세요.')
+            return
+        print('Medium 학습 모델을 그대로 Easy에 평가:',current)
+        print('체크포인트 SHA-256:',digest(current))
+        return self.test('easy')
+
     def package(self):
         self._ready();state,current=self._current()
         with tempfile.TemporaryDirectory() as tmp:

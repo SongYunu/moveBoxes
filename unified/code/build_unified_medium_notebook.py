@@ -23,7 +23,7 @@ def make_notebook(config=None):
         ('06 · 학습 전 Medium 개발 점수 / 시간 확인','_state, _checkpoint = experiment._current()\n_baseline = experiment._evaluate("medium", _checkpoint, "medium_initial")\nprint("Medium 초기 분류:", _baseline["sort_accuracy"], "평가 시간(초):", _baseline["elapsed_seconds"])'),
         (f"07 · Medium {cfg['block_iters']*cfg['max_blocks']['medium']:,}회 연속 학습 / {cfg['block_iters']:,}회마다 부분 보강 / Easy 점수로 중단하지 않음",'experiment.train_medium()'),
         ('08 · Medium 최고 모델 별도 테스트와 영상','_ = experiment.test("medium")'),
-        ('09 · 같은 Medium 모델의 Easy 성능 확인 / 보관된 Easy 원본과는 별개','_ = experiment.test("easy")'),
+        ('09 · 채택된 Medium 학습 모델 그대로 Easy 평가 / 초기 Easy 모델이면 안내 후 생략','_ = experiment.test_medium_on_easy()'),
         ('10 · Medium 선택 기록','_ = experiment.report()'),
         ('11 · Medium 최종 100회 평가 / 선택 사항','experiment.final_evaluation()'),
         ('12 · Medium 최고 모델 패키지','_ = experiment.package()')]

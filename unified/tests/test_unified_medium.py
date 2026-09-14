@@ -29,6 +29,18 @@ def deadlines(root):
 
 
 class MediumAdaptationTests(unittest.TestCase):
+    def test_easy_evaluation_uses_medium_winner_and_labels_initial_model(self):
+        obj=UnifiedMedium(CONFIG,{})
+        initial=dict(checkpoint='easy/ref.pt',easy_reference='easy/ref.pt',history=[])
+        with patch.object(obj,'_ready'),patch.object(obj,'_current',return_value=(initial,Path('initial.pt'))),patch.object(obj,'test') as evaluate,contextlib.redirect_stdout(io.StringIO()):
+            obj.test_medium_on_easy();evaluate.assert_not_called()
+        selected=dict(checkpoint='medium/candidate.pt',easy_reference='easy/ref.pt',history=[dict(level='medium',accepted=True)])
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate=Path(tmp)/'candidate.pt';candidate.write_bytes(b'medium-winner')
+            with patch.object(obj,'_ready'),patch.object(obj,'_current',return_value=(selected,candidate)),patch.object(obj,'test') as evaluate,contextlib.redirect_stdout(io.StringIO()):
+                obj.test_medium_on_easy();evaluate.assert_called_once_with('easy')
+                self.assertEqual(obj._test_candidate('easy')[0],obj._test_candidate('medium')[0])
+
     def test_notebook_bootstrap_and_budget(self):
         nb=make_notebook();scope={};exec(''.join(nb['cells'][0]['source']),scope)
         scope['CFG'].update(project_dir=str(ROOT),profile='smoke')
