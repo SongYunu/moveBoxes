@@ -8,7 +8,8 @@ from stage_schema import PICK, HOLD, RECOVER, STAGES, GATES
 
 
 class StagePolicy:
-    def __init__(self, model, gate_threshold=.65, stage_threshold=.6, temporal_decay=.25, ensemble_window=4):
+    def __init__(self, model, gate_threshold=.65, stage_threshold=.6, temporal_decay=.25, ensemble_window=4,
+                 auto_reset_steps=None):
         if not 0 < gate_threshold < 1 or not 0 < stage_threshold < 1:
             raise ValueError('Gate confidence thresholds must be in (0,1)')
         if temporal_decay < 0 or not 1 <= ensemble_window <= model.cfg['chunk_size']:
@@ -17,6 +18,9 @@ class StagePolicy:
         self.device = next(model.parameters()).device
         self.gate_threshold, self.stage_threshold = gate_threshold, stage_threshold
         self.decay, self.window = temporal_decay, ensemble_window
+        if auto_reset_steps is not None and (type(auto_reset_steps) is not int or auto_reset_steps < 1):
+            raise ValueError('auto_reset_steps must be a positive integer or None')
+        self.auto_reset_steps = auto_reset_steps
         self.reset()
 
     def reset(self):
@@ -28,6 +32,8 @@ class StagePolicy:
     @torch.no_grad()
     def act(self, obs, deterministic=True):
         state = (obs['state'] if isinstance(obs, dict) else obs).float().to(self.device)
+        if self.auto_reset_steps is not None and self.step >= self.auto_reset_steps:
+            self.reset()
         if self.batch != len(state):
             self.reset()
             self.batch = len(state)
@@ -73,7 +79,7 @@ def load_stage(checkpoint, sample_obs, action_space, device, **cfg):
     model = StageACT(saved['model_config'])
     model.load_state_dict(saved['model'])
     return StagePolicy(model.to(device), **{k:cfg[k] for k in
-        ('gate_threshold','stage_threshold','temporal_decay','ensemble_window') if k in cfg})
+        ('gate_threshold','stage_threshold','temporal_decay','ensemble_window','auto_reset_steps') if k in cfg})
 
 
 def load_policy(checkpoint, sample_obs, action_space, device):

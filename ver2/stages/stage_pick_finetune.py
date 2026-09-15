@@ -1,0 +1,151 @@
+"""Prepare a separate short pick-focused run from the packaged submission weights."""
+import copy
+import hashlib
+import shutil
+import sys
+from pathlib import Path
+
+from marso_experiment import digest, read_json, save_json
+
+
+def prepare_pick_finetune(experiment, candidate, level='easy', *, iterations=2000,
+                          lr_factor=.2, first_pick_fraction=.5, run_suffix='_pick_refine_v1',
+                          pick_sampling='first'):
+    if level not in ('easy', 'medium', 'hard'):
+        raise ValueError('Unknown difficulty')
+    if type(iterations) is not int or iterations < 1 or not 0 < lr_factor <= 1:
+        raise ValueError('Invalid fine-tune iterations or learning-rate factor')
+    if not 0 < first_pick_fraction < 1 or not run_suffix:
+        raise ValueError('Use a separate run suffix and a pick fraction in (0,1)')
+    if pick_sampling not in ('first','all_picks'):
+        raise ValueError('Unknown pick sampling mode')
+    candidate = Path(candidate)
+    source = experiment.run_dir/level
+    checkpoint = candidate/'checkpoints'/level/'model.pt'
+    policy = read_json(checkpoint.parent/'policy_config.json')
+    provenance = read_json(candidate/'manifest.json')
+    previous = read_json(source/'stage_train_job.json')
+    recovery = read_json(source/'collection/manifest.json')
+    if not checkpoint.is_file() or not policy or not previous or not recovery or not recovery.get('complete'):
+        raise RuntimeError('Requires the current packaged checkpoint and completed recovery data')
+    if digest(checkpoint) != provenance['levels'][level]['checkpoint_sha256']:
+        raise ValueError('Packaged checkpoint differs from its manifest')
+    if policy['model_config'] != previous['model_config']:
+        raise ValueError('Packaged and trained architectures differ')
+    # Preserve the source of the original training job for reproducible resume.
+    names = ('act_v2_model.py','act_v2_data.py','stage_schema.py','stage_labels.py',
+             'stage_model.py','stage_data.py','stage_train.py')
+    source_hash = hashlib.sha256(''.join(experiment.sources[n] for n in names).encode()).hexdigest()
+    if source_hash != previous['source_sha256']:
+        raise ValueError('Loaded training source differs from the original job')
+    child_sources = dict(experiment.sources)
+    trainer = 'stage_train.py'
+    if pick_sampling == 'all_picks':
+        extra = ('stage_pick_sampling.py','stage_pick_train.py')
+        for name in extra:
+            child_sources[name] = Path(__file__).with_name(name).read_text(encoding='utf-8')
+        source_hash = hashlib.sha256(''.join(child_sources[n] for n in names+extra).encode()).hexdigest()
+        trainer = 'stage_pick_train.py'
+    for entry in recovery['episodes']:
+        path = source/'collection'/entry['file']
+        if path.resolve().parent != (source/'collection').resolve() or digest(path) != entry['sha256']:
+            raise ValueError('Recovery data path/hash mismatch')
+
+    train_config = copy.deepcopy(previous['train_config'])
+    train_config.update(total_iters=iterations, lr=previous['train_config']['lr']*lr_factor,
+                        warmup_steps=100, save_freq=500, first_pick_fraction=first_pick_fraction)
+    if pick_sampling == 'all_picks':
+        train_config['pick_sampling'] = pick_sampling
+    cfg = copy.deepcopy(experiment.cfg)
+    cfg.update(run_name=cfg['run_name']+run_suffix, **{k:v for k,v in
+               previous['model_config'].items() if k != 'state_dim'})
+    cfg.update({k:v for k,v in train_config.items() if k != 'total_iters'})
+    cfg['total_iters'] = {name:iterations for name in ('easy','medium','hard')}
+    child = type(experiment)(cfg, child_sources)
+    child.connect()
+    child._stage_helpers()
+    target = child.run_dir/level
+    with child.persist_operation(level):
+        pairs = [(checkpoint, target/'initial_model.pt')]
+        pairs += [(p,target/'collection'/p.name) for p in (source/'collection').iterdir()
+                  if p.suffix in ('.json','.npz')]
+        for src, dst in pairs:
+            if dst.exists():
+                if digest(src) != digest(dst):
+                    raise ValueError('Existing fine-tune input differs; use a new run_suffix')
+            else:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+        job = dict(folder=str(target), data=previous['data'],
+                   model_config=previous['model_config'], train_config=train_config,
+                   policy_config=policy, num_demos=previous['num_demos'],
+                   source_sha256=source_hash, warm_start=str(target/'initial_model.pt'),
+                   warm_start_sha256=digest(target/'initial_model.pt'),
+                   recovery_manifest=str(target/'collection/manifest.json'),
+                   recovery_manifest_sha256=digest(target/'collection/manifest.json'))
+        if pick_sampling == 'all_picks':
+            job['trainer'] = trainer
+        job_path = target/'stage_train_job.json'
+        if job_path.exists() and read_json(job_path) != job:
+            raise ValueError('Existing fine-tune settings differ; use a new run_suffix')
+        save_json(job_path, job)
+        save_json(target/'pick_finetune_origin.json', dict(source_run=str(experiment.run_dir),
+            candidate=str(candidate), checkpoint_sha256=digest(checkpoint),
+            first_pick_fraction=first_pick_fraction,
+            pick_sampling=pick_sampling,
+            optimizer='new AdamW at lower learning rate; subsequent resume restores optimizer/RNG',
+            inference='same packaged policy configuration; stage horizons unchanged'))
+    print(f'[{level}] prepared {iterations} steps / lr={train_config["lr"]:g} / '
+          f'first_pick_fraction={first_pick_fraction} / {child.run_dir}', flush=True)
+    return child
+
+
+def train_pick_finetune(child, level):
+    """Run the prepared job; do not regenerate it through StageExperiment.train."""
+    folder = child.run_dir/level
+    job_path = folder/'stage_train_job.json'
+    job = read_json(job_path)
+    if not job or 'first_pick_fraction' not in job['train_config']:
+        raise RuntimeError('Call prepare_pick_finetune first')
+    completed = read_json(folder/'training_complete.json')
+    if completed:
+        print(level, 'pick fine-tune already complete; run official evaluation', flush=True)
+        return
+    with child.persist_operation(level):
+        child.run([sys.executable, str(child.repo/job.get('trainer','stage_train.py')), str(job_path)],
+                  cwd=child.repo, log=folder/'train.log')
+
+
+def package_pick_finetune(child, candidate, level):
+    """Same integrated policy; replace only this level in a separate candidate."""
+    import torch
+    candidate = Path(candidate)
+    target = child.run_dir/'integrated_candidate'
+    if target.resolve() == candidate.resolve():
+        raise ValueError('Cannot overwrite the original candidate')
+    latest = child.run_dir/level/'checkpoints/latest.pt'
+    job = read_json(child.run_dir/level/'stage_train_job.json')
+    saved = torch.load(latest, map_location='cpu', weights_only=True)
+    if saved['format'] != 'moveboxes-stage-act-v1' or saved['model_config'] != job['model_config']:
+        raise ValueError('Fine-tune checkpoint architecture mismatch')
+    parent_hash = digest(candidate/'manifest.json')
+    if target.exists():
+        existing = read_json(target/'manifest.json')
+        if not existing or existing.get('package_parent_sha256') != parent_hash:
+            raise ValueError('Existing refined candidate has a different parent; use a new run suffix')
+    else:
+        shutil.copytree(candidate, target)
+        manifest = read_json(target/'manifest.json')
+        manifest['package_parent_sha256'] = parent_hash
+        save_json(target/'manifest.json', manifest)
+    ckdir = target/'checkpoints'/level
+    shutil.copy2(latest, ckdir/'model.pt')
+    save_json(ckdir/'policy_config.json', job['policy_config'])
+    manifest = read_json(target/'manifest.json')
+    manifest['run_name'] = child.cfg['run_name']
+    manifest['levels'][level].update(source=str(latest), checkpoint_sha256=digest(latest),
+        step=saved['step'], model_config=saved['model_config'], policy_config=job['policy_config'])
+    manifest['pick_finetune_origin'] = read_json(child.run_dir/level/'pick_finetune_origin.json')
+    save_json(target/'manifest.json', manifest)
+    print('Separate integrated candidate:', target, flush=True)
+    return target

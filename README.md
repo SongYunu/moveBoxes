@@ -1,5 +1,14 @@
 # moveBoxes
 
+**검증된 난이도별 Stage ACT에서 독립적으로 이어 학습:** [Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_anchor_continue_colab.ipynb).
+Easy 100% 체크포인트는 고정하고, Medium 40.625%와 Hard 4.167% 체크포인트는 각자의 가중치에서 별도로 추가 학습합니다. 한 정책 코드가 난이도에 맞는 체크포인트를 로드하며, 학습 전후 모두 공식 `eval.py`와 영상으로 확인합니다.
+
+**새 가중치 재학습:** [모든 다음 상자 집기 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_all_pick_retrain_colab.ipynb) · [실패 원인 비교](ver2/stages/PICK_REGRESSION_AUDIT.md).
+기존 GitHub 토큰·데이터·T4 준비 후 별도 run에서 처음부터 StageACT를 학습합니다. 모든 상자 집기를 균등하게 보강하며, 매 step XYZ/그리퍼를 재추론합니다. 현재 실패 모델과 과거 best는 초기 가중치로 사용하지 않습니다. 500 step마다 optimizer/RNG를 백업하고 각 난이도의 공식 평가와 영상을 표시합니다. 실제 새 모델 점수는 아직 측정하지 않았습니다.
+
+**State Stage ACT 단일 deadline 정책:** [Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_deadline_colab.ipynb) · [구성과 실행 안내](ver2/stages/DEADLINE_POLICY.md).
+GitHub 토큰 인증과 state dataset 검증부터 State Stage ACT 학습, 중단 복구, stage-aware chunk·learned gripper 안정화, 공식 `eval.py` 평가, rollout 영상의 Colab inline 재생, ZIP 생성까지 한 Colab에서 실행합니다. Drive는 사용하지 않으며 과거 best는 자동 복원하지 않습니다. **새 로직의 실제 Colab 점수는 아직 측정하지 않았습니다.**
+
 **공개 사전학습 모델을 쓰는 RGB 공동 학습:** [SmolVLA + Octo 통합 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/foundation/notebooks/moveboxes_foundation_both_colab.ipynb) · [설명](foundation/README.md).
 각 모델은 Easy·Medium·Hard RGB 시연 600개를 처음부터 함께 보며, 같은 최고 adapter 하나를 세 난이도에서 평가합니다. 모델과 시뮬레이터 의존성은 서로 다른 Python 환경에 격리했습니다.
 

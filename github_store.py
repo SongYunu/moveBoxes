@@ -201,15 +201,20 @@ class GitHubStore:
         except AssetUploadError as error:
             if error.status != 422:
                 raise
-            self.load(create=False)
-            if name in self.assets:
-                if self.assets[name]['size'] != path.stat().st_size:
-                    raise RuntimeError('Existing immutable asset has an unexpected size') from None
-                return self.assets[name]
-            if self.write_asset_count >= 950:
-                self._next_part()
-                return self._upload_once(path,name)
-            raise
+            # GitHub can return 422 while a just-finished upload is still absent
+            # from the release asset listing. Refresh once after propagation; if
+            # it is still absent, continue in a new release part. The immutable
+            # content name makes either outcome safe to restore.
+            for delay in (0, 2):
+                if delay:
+                    time.sleep(delay)
+                self.load(create=False)
+                if name in self.assets:
+                    if self.assets[name]['size'] != path.stat().st_size:
+                        raise RuntimeError('Existing immutable asset has an unexpected size') from None
+                    return self.assets[name]
+            self._next_part()
+            return self._upload_once(path,name)
 
     def _upload_once(self, path, name):
         endpoint = f"/repos/{self.repository}/releases/{self.release['id']}/assets?name="+urllib.parse.quote(name)
@@ -350,4 +355,10 @@ def sync_from_env():
     root = Path(key[2])
     files = compact_medium_files(root) if os.environ.get('MOVEBOXES_COMPACT_MEDIUM_SYNC')=='1' and key[3]=='medium' else None
     if os.environ.get('MOVEBOXES_COMPACT_HARD_SYNC')=='1' and key[3]=='hard':files=compact_hard_files(root)
-    _SYNC_STORES[key].sync(root, key[3], files, refresh=False)
+    try:
+        _SYNC_STORES[key].sync(root, key[3], files, refresh=False)
+    except AssetUploadError as error:
+        # A completed local checkpoint is more valuable than aborting GPU work
+        # because GitHub temporarily rejects a Release asset. The next boundary
+        # retries the immutable upload, while latest.pt remains resumable locally.
+        print('GitHub 체크포인트 백업 지연; 로컬 학습은 계속합니다:', error, flush=True)

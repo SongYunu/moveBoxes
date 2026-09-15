@@ -1,0 +1,449 @@
+"""Build the no-Drive, resumable State Stage ACT deadline Colab."""
+import json
+from pathlib import Path
+
+from build_stage_notebook import CONFIG as STAGE_CONFIG, make_notebook as stage_notebook
+
+
+CONFIG = dict(
+    STAGE_CONFIG,
+    run_name='moveboxes_stage_chunk_deadline_v1',
+    project_ref='stage-act-chunk-compare',
+    output_root='/content/moveboxes_runs',
+    data_source='/content/moveboxes_data_cache/marso_state_data.zip',
+    download_cache='/content/moveboxes_data_cache',
+    save_freq=1000,
+    console_interval_seconds=10,
+)
+
+
+def make_notebook(config=None):
+    cfg = dict(CONFIG, **(config or {}))
+    base = stage_notebook(cfg)
+    cells = base['cells'][:5]
+    cells[0]['source'][0] = '# 01 · STATE STAGE ACT 단일 정책 CONFIG · GitHub 중단 복구 · Drive 미사용\n'
+
+    def add(kind, text, ident):
+        cell = dict(cell_type=kind, metadata={'id': ident}, source=text.splitlines(keepends=True))
+        if kind == 'code':
+            cell.update(execution_count=None, outputs=[])
+        cells.append(cell)
+
+    add('markdown', '''## 실행 순서
+
+03 셀은 `GH_TOKEN` 환경변수, Colab Secrets, 비공개 입력창 순서로 GitHub 토큰을 받습니다. 같은 `run_name`의 **현재 학습 상태만** GitHub Release에서 복원합니다. 과거 best checkpoint를 자동으로 가져오지 않습니다.
+
+04~05에서 T4 환경과 state dataset을 준비합니다. 각 난이도는 recovery 수집 후 Stage ACT를 학습합니다. 수집은 매 시도, 학습은 매 1,000 iteration마다 GitHub에 동기화됩니다. 런타임이 끊기면 새 런타임에서 01~05와 해당 난이도의 수집·학습 셀을 다시 실행하면 이어집니다.\n\n학습 loss는 action imitation + stage/gate classification + KL을 위한 최적화 신호일 뿐 점수가 아닙니다. 제출 성능은 공식 simulator의 SORT ACCURACY = 올바르게 분류한 parcel 수 / 전체 parcel 수로 평가합니다. 기본 candidate는 loss로 고른 `best_val.pt`가 아니라 현재 학습 진행의 latest.pt를 사용합니다.
+''', 'deadline-guide')
+
+    for level in ('easy', 'medium', 'hard'):
+        label = level.upper()
+        number = len(cells) + 1
+        add('code', f'''# {number:02d} · {label} recovery 수집 · 매 시도 GitHub 저장, 재실행 시 이어서 진행
+experiment.collect({level!r})
+''', f'collect-{level}')
+        number = len(cells) + 1
+        add('code', f'''# {number:02d} · {label} State Stage ACT 학습 · 로그 표시 + 매 checkpoint 완전 복구 저장
+# latest.pt에는 model, optimizer, AMP scaler, sampling/CPU/CUDA RNG가 함께 저장됩니다.
+experiment.train({level!r})
+''', f'train-{level}')
+
+    add('code', '''# 현재 run의 학습 checkpoint에 단일 stage-aware 실행 정책 적용
+import hashlib, importlib.metadata, json, os, shutil, subprocess, sys
+from pathlib import Path
+import torch
+
+# Use the trainer's actual directory; it includes the profile suffix.
+RUN_DIR = Path(experiment.run_dir)
+CANDIDATE = RUN_DIR/'integrated_candidate_v2'
+CHECKPOINT_OVERRIDES = {'easy':'', 'medium':'', 'hard':''}
+STAGE_HORIZONS = dict(pick=2, carry=6, place=2, done=1)
+GRIPPER_MARGIN = .5
+GRIPPER_CONFIRM_STEPS = 2
+FRESH_GRIPPER = True
+GRIPPER_FSM = False
+MAX_STEPS = 200
+SMOKE_SEED = 61000
+DIMS = {'easy':54, 'medium':72, 'hard':90}
+
+# 경로를 따로 지정하지 않으면 loss로 선택한 best_val이 아니라 이 run의 latest를 사용합니다.
+selected = {}
+for level in DIMS:
+    override = CHECKPOINT_OVERRIDES[level]
+    if override:
+        checkpoint = Path(override).expanduser().resolve()
+    else:
+        folder = RUN_DIR/level/'checkpoints'
+        checkpoint = folder/'latest.pt'\n        if not checkpoint.is_file():\n            checkpoint = None
+    if checkpoint is not None:
+        selected[level] = checkpoint
+if not selected:
+    raise FileNotFoundError(f'{RUN_DIR}에서 latest.pt를 찾지 못했습니다. '
+                            '03 셀의 로컬 작업 경로와 학습 checkpoint 저장 로그를 확인하세요.')
+
+def sha256(path):
+    with Path(path).open('rb') as handle:
+        return hashlib.file_digest(handle, 'sha256').hexdigest()
+
+CANDIDATE.mkdir(parents=True, exist_ok=True)
+for source in ('stage_chunk_policy.py','stage_policy.py','stage_model.py','stage_schema.py'):
+    shutil.copy2(PROJECT/'ver2/stages'/source, CANDIDATE/source)
+shutil.copy2(PROJECT/'ver2/act_v2_model.py', CANDIDATE/'act_v2_model.py')
+
+manifest = dict(policy='state_stage_act_chunk_fsm', project_commit=CFG['project_commit'],
+                official_commit=CFG['repo_commit'], run_name=CFG['run_name'], levels={})
+level_lines = []
+for level, checkpoint in selected.items():
+    saved = torch.load(checkpoint, map_location='cpu', weights_only=True)
+    if saved.get('format') != 'moveboxes-stage-act-v1':
+        raise ValueError(f'{level}: Stage ACT checkpoint가 아닙니다: {saved.get("format")}')
+    model_config = saved['model_config']
+    if model_config.get('state_dim') != DIMS[level] or model_config.get('chunk_size', 0) < 6:
+        raise ValueError(f'{level}: state dimension 또는 trained chunk size 불일치')
+    sidecar = checkpoint.parent/'policy_config.json'
+    if not sidecar.is_file():
+        raise FileNotFoundError(sidecar)
+    policy = json.loads(sidecar.read_text(encoding='utf-8'))
+    if policy.get('model_config') != model_config:
+        raise ValueError(f'{level}: checkpoint/sidecar architecture 불일치')
+    policy.update(model_config=model_config, stage_aware_chunk=True,
+        stage_horizons=STAGE_HORIZONS, gripper_fsm=GRIPPER_FSM, fresh_gripper=FRESH_GRIPPER,
+                  gripper_margin=GRIPPER_MARGIN,
+                  gripper_confirm_steps=GRIPPER_CONFIRM_STEPS,
+                  auto_reset_steps=MAX_STEPS-1)
+    policy.pop('act_horizon', None)
+    policy.pop('num_inference_steps', None)
+    target_dir = CANDIDATE/'checkpoints'/level
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir/'model.pt'
+    shutil.copy2(checkpoint, target)
+    (target_dir/'policy_config.json').write_text(json.dumps(policy, indent=2), encoding='utf-8')
+    if sha256(target) != sha256(checkpoint):
+        raise RuntimeError(f'{level}: checkpoint 사본 해시 불일치')
+    manifest['levels'][level] = dict(source=str(checkpoint), checkpoint_sha256=sha256(target),
+                                     step=saved.get('step'), model_config=model_config,
+                                     policy_config=policy)
+    level_lines.append(f'    {level}: {{ checkpoint: checkpoints/{level}/model.pt }}')
+
+submission = 'team: '+json.dumps(CFG['team'])+'\\nstate:\\n  policy: stage_chunk_policy:load_policy\\n  levels:\\n'+'\\n'.join(level_lines)+'\\n'
+(CANDIDATE/'submission.yaml').write_text(submission, encoding='utf-8')
+(CANDIDATE/'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+print('현재 run checkpoint:', {k:str(v) for k,v in selected.items()})
+print('단일 integrated candidate:', CANDIDATE)
+''', 'integrated-candidate')
+
+    add('code', '''# 실제 simulator state/action/buffer/reset sanity check
+from stage_chunk_policy import load_policy
+from warehouse_sort.utils import compose_cfg, make_env
+
+for level in selected:
+    cfg = compose_cfg(['difficulty='+level, 'obs_mode=state', 'max_episode_steps='+str(MAX_STEPS)],
+                      config_dir=str(Path(CFG['repo_dir'])/'conf'))
+    env, _ = make_env(cfg, 'state', cfg.randomization, num_envs=1)
+    try:
+        obs, _ = env.reset(seed=SMOKE_SEED)
+        assert tuple(obs.shape) == (1, DIMS[level])
+        agent = load_policy(CANDIDATE/'checkpoints'/level/'model.pt', obs,
+                            env.single_action_space, 'cuda')
+        with torch.no_grad():
+            first = agent.act(obs)
+        assert first.shape == (1,4) and torch.isfinite(first).all()
+        assert first.abs().max() <= 1 and first[0,3].item() in (-1.,1.)
+        assert agent.action_buffer.shape[1] == manifest['levels'][level]['model_config']['chunk_size']
+        agent.reset()
+        assert not agent.history and agent.action_buffer is None and agent.grip_state is None
+        obs2, _ = env.reset(seed=SMOKE_SEED)
+        with torch.no_grad():
+            repeated = agent.act(obs2)
+        torch.testing.assert_close(first, repeated, rtol=0, atol=0)
+        agent.step = MAX_STEPS-1
+        agent.history.append(torch.full_like(obs2, 123.))
+        agent.action_buffer.fill_(123.)
+        with torch.no_grad():
+            boundary = agent.act(obs2)
+        torch.testing.assert_close(first, boundary, rtol=0, atol=0)
+        assert agent.step == 1
+        env.step(repeated)
+        print(level, 'state/action/buffer/manual+official reset/env.step OK')
+    finally:
+        env.close()
+''', 'integrated-sanity')
+
+    add('code', '''# Colab inline 영상 player · 한 번만 실행
+from IPython.display import Video, display
+
+VIDEO_LEVEL = next(iter(selected))  # 'easy', 'medium', 'hard' 중 현재 생성된 난이도
+VIDEO_WIDTH = 960
+DOWNLOAD_VIDEO = False
+
+def show_official_video(label, level=None):
+    level = level or VIDEO_LEVEL
+    if level not in selected:
+        raise ValueError(f'{level} checkpoint가 없습니다. 가능한 난이도: {list(selected)}')
+    folder = RUN_DIR/level/'integrated_official_eval'/label/'videos'
+    videos = sorted(folder.rglob('*.mp4'), key=lambda path:path.stat().st_mtime)
+    if not videos:
+        raise FileNotFoundError(f'{folder}에 MP4가 없습니다. 바로 앞 평가 셀을 먼저 실행하세요.')
+    video = videos[-1]
+    print(f'[{level}/{label}] {video.name} · {video.stat().st_size/1024**2:.1f} MiB')
+    # Older Colab IPython checks os.path.exists(data) before filename.
+    display(Video(str(video), embed=True, width=VIDEO_WIDTH))
+    if DOWNLOAD_VIDEO:
+        from google.colab import files
+        files.download(str(video))
+    return video
+
+def show_all_official_videos(label):
+    for level in selected:
+        try:
+            show_official_video(label, level)
+        except FileNotFoundError as error:
+            print(error)
+''', 'video-player')
+
+    add('code', '''# 공식 eval.py · 1 episode smoke
+import os, signal, subprocess, sys
+RESULTS = RUN_DIR
+SMOKE_CONFIG = RUN_DIR/'integrated_smoke_eval.yaml'
+SMOKE_CONFIG.write_text('eval:\\n  n_episodes: 1\\n  seeds: ['+str(SMOKE_SEED)+']\\n', encoding='utf-8')
+UPSTREAM = Path(CFG['repo_dir'])
+
+def run_official(level, eval_config, label, candidate=None):
+    candidate = Path(candidate) if candidate is not None else CANDIDATE
+    output = RUN_DIR/level/'integrated_official_eval'/label
+    output.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, str(UPSTREAM/'eval.py'), 'difficulty='+level,
+        'obs_mode=state', 'policy=stage_chunk_policy:load_policy',
+        'checkpoint='+str(candidate/'checkpoints'/level/'model.pt'),
+        'eval_config='+str(eval_config), 'max_episode_steps='+str(MAX_STEPS),
+        'hydra.run.dir='+str(output)]
+    child_env = dict(os.environ)
+    child_env['PYTHONPATH'] = str(candidate)+os.pathsep+str(UPSTREAM)+os.pathsep+child_env.get('PYTHONPATH','')
+    log = output/'official_eval.log'
+    with log.open('w', encoding='utf-8') as handle:
+        process = subprocess.Popen(command, cwd=UPSTREAM, env=child_env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, errors='replace', bufsize=1)
+        try:
+            for line in process.stdout:
+                handle.write(line)
+                handle.flush()
+                print(line, end='', flush=True)
+            code = process.wait()
+        finally:
+            # Colab's stop button interrupts the kernel, not its GPU subprocess.
+            if process.poll() is None:
+                previous_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
+                try:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                finally:
+                    signal.signal(signal.SIGINT, previous_sigint)
+            process.stdout.close()
+    if code:
+        raise RuntimeError(f'official eval failed ({level}); {log} 확인')
+    return log
+
+for level in selected:
+    run_official(level, SMOKE_CONFIG, 'smoke')
+''', 'official-smoke')
+
+    add('code', '''# 방금 생성된 1-episode smoke 영상 바로 보기
+show_all_official_videos('smoke')
+''', 'video-smoke')
+
+    add('code', '''# 공식 conf/eval/default.yaml 평가 · 자체 metric/승자 선택 없음
+OFFICIAL_EVAL_CONFIG = UPSTREAM/'conf/eval/default.yaml'
+if not OFFICIAL_EVAL_CONFIG.is_file():
+    raise FileNotFoundError(OFFICIAL_EVAL_CONFIG)
+for level in selected:
+    run_official(level, OFFICIAL_EVAL_CONFIG, 'default')
+print('공식 raw logs/videos:', {level:str(RUN_DIR/level/'integrated_official_eval'/'default') for level in selected})
+''', 'official-default')
+
+    add('code', '''# 방금 생성된 official default 영상 바로 보기
+show_all_official_videos('default')
+''', 'video-default')
+
+    add('code', '''# 선택 사항 · 공식 eval.py로 100-episode 공개 seed 성능 추정
+# 계산식은 공식 evaluator 그대로이며 held-out Kaggle 점수는 아닙니다.
+BENCHMARK_EPISODES = int(CFG['benchmark_episodes'])
+BENCHMARK_SEEDS = list(range(int(CFG['eval_seed_start']),
+                             int(CFG['eval_seed_start'])+BENCHMARK_EPISODES))
+BENCHMARK_CONFIG = RUN_DIR/'integrated_public_benchmark.yaml'
+BENCHMARK_CONFIG.write_text('eval:\\n  n_episodes: '+str(BENCHMARK_EPISODES)+
+    '\\n  seeds: '+json.dumps(BENCHMARK_SEEDS)+'\\n', encoding='utf-8')
+for level in selected:
+    run_official(level, BENCHMARK_CONFIG, 'public_100ep')
+print('100-episode 공식 evaluator raw logs:',
+      {level:str(RUN_DIR/level/'integrated_official_eval'/'public_100ep'/'official_eval.log')
+       for level in selected})
+''', 'official-public-benchmark')
+
+    add('code', '''# 선택 실행한 100-episode 평가 영상 보기
+show_all_official_videos('public_100ep')
+''', 'video-public-benchmark')
+
+    add('code', '''# 선택 사항 · 평가 로그/영상 GitHub 백업 (평가·재생과 독립)
+# 학습 checkpoint의 자동 백업은 기존대로 유지됩니다.
+BACKUP_EVAL_RESULTS = False
+if BACKUP_EVAL_RESULTS:
+    for level in selected:
+        try:
+            experiment.sync_level(level)
+            print(level, '평가 결과 GitHub 백업 완료')
+        except Exception as error:
+            print(level, '평가 결과 백업 실패:', error)
+            print('로컬 평가 로그/MP4는 유지됩니다. 영상 재생과 다운로드는 계속 가능합니다.')
+''', 'optional-eval-backup')
+
+    add('code', '''# 현재 run 전체 PC 백업 · 중단 복구용 optimizer/RNG/recovery 데이터 포함
+# 학습/수집이 끝나거나 중단되어 파일 기록이 멈춘 상태에서 실행합니다.
+from google.colab import files
+checkpoints = list(RUN_DIR.glob('*/checkpoints/latest.pt'))
+if not checkpoints:
+    raise FileNotFoundError(f'{RUN_DIR}에 latest.pt가 없습니다.')
+backup = shutil.make_archive(str(RUN_DIR.parent/(RUN_DIR.name+'_backup')), 'zip',
+                             root_dir=RUN_DIR.parent, base_dir=RUN_DIR.name)
+print('복구용 checkpoint:', [str(path) for path in checkpoints])
+print('전체 run 백업 ZIP:', backup)
+files.download(backup)
+''', 'run-backup-download')
+
+    add('code', '''# 단일 candidate ZIP 생성 및 브라우저 다운로드
+check = """import json,sys,torch\nfrom pathlib import Path\nfrom types import SimpleNamespace\nfrom stage_chunk_policy import load_policy\nroot=Path(sys.argv[1])\nmanifest=json.loads((root/'manifest.json').read_text())\nfor level,row in manifest['levels'].items():\n p=root/'checkpoints'/level/'model.pt'\n agent=load_policy(p,torch.zeros(1,row['model_config']['state_dim']),SimpleNamespace(shape=(4,)),'cpu')\n a=agent.act(torch.zeros(1,row['model_config']['state_dim']))\n assert a.shape==(1,4) and torch.isfinite(a).all() and a.abs().max()<=1\n agent.reset()\n print(level,'candidate import/action/reset OK')\n"""
+subprocess.run([sys.executable, '-c', check, str(CANDIDATE)], cwd=CANDIDATE, check=True)
+archive = shutil.make_archive(str(CANDIDATE), 'zip', CANDIDATE)
+from google.colab import files
+print('candidate ZIP:', archive)
+files.download(archive)
+''', 'candidate-download')
+
+    base['cells'] = cells
+    base['metadata']['colab']['name'] = 'moveboxes_stage_deadline_colab.ipynb'
+    return base
+
+
+def make_runtime_repair_notebook():
+    """Append-only cells for the already trained, attached Colab session."""
+    notebook = make_notebook()
+    original = {c['metadata'].get('id'): ''.join(c['source']) for c in notebook['cells']}
+    cells = []
+
+    def add(kind, source, ident):
+        cell = dict(cell_type=kind, metadata={'id': ident}, source=source.splitlines(keepends=True))
+        if kind == 'code':
+            cell.update(execution_count=None, outputs=[])
+        cells.append(cell)
+
+    add('markdown', '''# 실행 중인 Colab의 평가·영상 셀 복구
+
+현재 열려 있는 학습 노트북 **아래에 코드 셀을 순서대로 복사**하세요. 이 파일을 별도 런타임에서 실행하면 기존 변수와 파일이 없습니다. 학습/수집을 중지한 상태에서 사용합니다.
+
+기존 candidate의 model.pt와 policy_config.json을 그대로 사용합니다. 학습, GitHub 복원/업로드, candidate 재생성은 실행하지 않습니다. 첫 셀은 같은 run에서 중단 후 남은 공식 eval.py 프로세스만 종료합니다.
+''', 'runtime-repair-guide')
+    add('code', '''# 1 · 기존 run/candidate 연결 + 중단 후 남은 평가 프로세스 정리
+import json, os, signal, subprocess, sys, time
+from pathlib import Path
+
+if 'experiment' not in globals() or 'CFG' not in globals():
+    raise RuntimeError('학습한 노트북의 같은 런타임 아래에 이 셀을 추가하세요.')
+RUN_DIR = Path(experiment.run_dir)
+CANDIDATE = Path(globals().get('CANDIDATE', RUN_DIR/'integrated_candidate'))
+UPSTREAM = Path(CFG['repo_dir'])
+manifest = json.loads((CANDIDATE/'manifest.json').read_text(encoding='utf-8'))
+selected = {level:CANDIDATE/'checkpoints'/level/'model.pt'
+            for level in manifest['levels']}
+if not selected or any(not path.is_file() for path in selected.values()):
+    raise FileNotFoundError(f'{CANDIDATE}의 기존 candidate checkpoint를 확인하세요.')
+MAX_STEPS = 200
+SMOKE_SEED = 61000
+
+def stop_leftover_official_eval():
+    # Linux /proc: match the exact evaluator and this run's output directory.
+    # Training/collection commands and other runs cannot match these conditions.
+    proc = Path('/proc')
+    if not proc.is_dir():
+        return
+    for entry in proc.iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            command_bytes = (entry/'cmdline').read_bytes()
+            args = command_bytes.decode(errors='replace').split('\\0')
+            evaluator = str((UPSTREAM/'eval.py').resolve())
+            outputs = [a.split('=',1)[1] for a in args if a.startswith('hydra.run.dir=')]
+            if evaluator not in args or not outputs:
+                continue
+            if not all(Path(output).resolve().is_relative_to(RUN_DIR.resolve()) for output in outputs):
+                continue
+            pid = int(entry.name)
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.monotonic()+5
+            while entry.exists() and time.monotonic() < deadline:
+                # Zombies have already released GPU resources; the parent reaps them.
+                if (entry/'stat').read_text().split(') ',1)[1].startswith('Z'):
+                    break
+                time.sleep(.1)
+            else:
+                if entry.exists() and (entry/'cmdline').read_bytes() == command_bytes:
+                    os.kill(pid, signal.SIGKILL)
+            print('중단 후 남은 이 run의 공식 평가 프로세스 종료:', pid)
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+
+stop_leftover_official_eval()
+print('학습 파일 유지:', RUN_DIR)
+print('기존 candidate 그대로 사용:', list(selected))
+''', 'runtime-repair-setup')
+    add('code', original['video-player']+"\nshow_all_official_videos('smoke')\n",
+        'runtime-repair-show-existing')
+    helper = original['official-smoke'].rsplit('\nfor level in selected:', 1)[0]
+    add('code', helper+'''
+
+def run_missing_smoke():
+    for level in selected:
+        folder = RUN_DIR/level/'integrated_official_eval/smoke/videos'
+        if any(path.stat().st_size > 0 for path in folder.rglob('*.mp4')):
+            print(level, '기존 smoke 영상 유지')
+            continue
+        run_official(level, SMOKE_CONFIG, 'smoke')
+    show_all_official_videos('smoke')
+
+# 영상이 없는 난이도만 공식 평가합니다. GitHub 업로드를 호출하지 않습니다.
+run_missing_smoke()
+''', 'runtime-repair-render-missing')
+    add('code', "import shutil\n"+original['run-backup-download'], 'runtime-repair-pc-backup')
+    notebook['cells'] = cells
+    notebook['metadata']['colab']['name'] = 'moveboxes_stage_runtime_repair.ipynb'
+    return notebook
+
+
+if __name__ == '__main__':
+    notebook = make_notebook()
+    for cell in notebook['cells']:
+        if cell['cell_type'] == 'code':
+            compile(''.join(cell['source']), cell.get('id', cell['metadata'].get('id','cell')), 'exec')
+    path = Path(__file__).parent/'notebooks/moveboxes_stage_deadline_colab.ipynb'
+    path.write_text(json.dumps(notebook, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+    print(path)
+    repair = make_runtime_repair_notebook()
+    for cell in repair['cells']:
+        if cell['cell_type'] == 'code':
+            compile(''.join(cell['source']), cell['metadata']['id'], 'exec')
+    path = path.with_name('moveboxes_stage_runtime_repair.ipynb')
+    path.write_text(json.dumps(repair, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+    print(path)
+    repair_code = '\n\n'.join(''.join(cell['source']) for cell in repair['cells']
+                            if cell['cell_type'] == 'code' and cell['metadata']['id'] != 'runtime-repair-pc-backup')
+    # The importable patch displays existing videos and defines the rerender helper.
+    # Running a new simulator evaluation remains an explicit next cell.
+    repair_code = repair_code.rsplit('\nrun_missing_smoke()', 1)[0]+'\n'
+    compile(repair_code, 'moveboxes_stage_runtime_repair.py', 'exec')
+    path = path.with_suffix('.py')
+    path.write_text(repair_code, encoding='utf-8')
+    print(path)

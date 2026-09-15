@@ -1,0 +1,158 @@
+# State Stage ACT 단일 deadline 학습·평가
+
+[Colab에서 열기](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_deadline_colab.ipynb)
+
+## 전체 흐름
+
+```text
+GitHub 토큰 인증
+  → 같은 run_name의 현재 학습 상태 복원
+  → GitHub Release의 state dataset 다운로드·SHA256 검증
+  → recovery 시연 수집
+  → State Stage ACT 학습
+  → 현재 run checkpoint 복사
+  → stage-aware action buffer + transition replan + learned gripper hysteresis
+  → 공식 eval.py smoke/default 평가
+  → candidate ZIP
+```
+
+Google Drive는 사용하지 않습니다. dataset cache, simulator, 학습 결과의 로컬 경로는 모두 `/content` 아래에 있습니다. 런타임이 사라지면 cache는 다시 다운로드하지만, 학습 결과는 GitHub Release에서 복원합니다.
+
+## GitHub 인증과 중단 복구
+
+03 셀은 다음 순서로 토큰을 읽습니다.
+
+1. `GH_TOKEN` 환경변수
+2. Colab Secrets의 `GH_TOKEN`
+3. 화면에 표시되는 비공개 입력창
+
+Fine-grained token은 `SongYunu/moveBoxes` 저장소의 **Contents: Read and write** 권한이 필요합니다. 토큰은 런타임 환경변수에만 둡니다.
+
+기본 `run_name`은 `moveboxes_stage_chunk_deadline_v1`입니다. 실제 학습 폴더에는 profile 접미사가 붙고, Release는 `run-moveboxes_stage_chunk_deadline_v1_benchmark`입니다. candidate 셀은 경로를 다시 조립하지 않고 `experiment.run_dir`를 사용합니다. 과거 Easy/Medium/Hard best를 자동 복원하지 않습니다. 중단 후에는 새 런타임에서 01~05를 다시 실행한 다음, 중단된 난이도의 수집 또는 학습 셀을 다시 실행합니다.
+
+- recovery 수집: 매 시도마다 `manifest.json`과 성공 episode를 동기화
+- 학습: 매 1,000 iteration마다 `latest.pt` 동기화
+- `latest.pt`: model, optimizer, AMP scaler, sampling RNG, CPU RNG, CUDA RNG 포함
+- 설정·데이터·코드 signature가 다르면 잘못 이어 학습하지 않고 중단
+- `training_complete.json`이 있으면 완성 학습을 다시 돌리지 않음
+
+## Colab 실행 순서
+
+1. T4 GPU 런타임을 선택합니다.
+2. 01 CONFIG에서 `run_name`을 확인합니다. 중단 복구 시 이름을 바꾸지 않습니다.
+3. 02에서 지정된 Git branch의 코드를 받습니다.
+4. 03에서 GitHub 토큰을 입력하고 현재 run을 복원합니다.
+5. 04에서 원래 프로젝트와 같은 pinned simulator dependency를 설치합니다.
+6. 05에서 state dataset을 GitHub Release에서 받고 SHA256과 54/72/90차원 데이터를 검사합니다.
+7. 필요한 난이도의 recovery 수집 셀을 실행합니다.
+8. 바로 다음 학습 셀을 실행합니다. loss, 처리 속도, ETA, validation loss와 checkpoint 저장이 셀 출력에 표시됩니다.
+9. 하나 이상의 난이도 학습이 latest.pt를 만들면 integrated candidate 셀부터 실행할 수 있습니다.
+10. video player 셀에서 재생할 난이도와 화면 폭을 지정합니다.
+11. official smoke 실행 직후 영상 보기 셀에서 1-episode rollout을 확인합니다.
+12. official default 실행 직후 해당 영상을 확인합니다.
+13. 필요하면 100-episode 공개 seed 평가와 영상 보기 셀을 실행합니다.
+14. 마지막 셀에서 ZIP을 생성합니다.
+
+## Loss와 실제 성능
+
+학습 중 출력되는 loss는 다음 항을 합친 최적화 신호입니다.
+
+- action imitation loss
+- stage classification loss
+- gate classification loss
+- latent KL loss
+
+이 값은 학습이 발산하는지 확인하는 데 사용하며 Kaggle 성능으로 해석하지 않습니다. 기본 candidate는 loss가 가장 낮은 `best_val.pt` 대신 현재 학습 상태인 `latest.pt`를 사용합니다.
+
+실제 성능은 공식 `eval.py`가 simulator rollout 후 계산합니다.
+
+```text
+SORT ACCURACY = 올바른 bin에 들어간 parcel 수 / 전체 parcel 수
+```
+
+함께 출력되는 `mean_sorted`, `all_placed_rate`, `mis_sort_rate`도 공식 evaluator의 진단값입니다. official default는 4 episode라 분산이 큽니다. 선택 사항인 100-episode 셀도 같은 공식 `eval.py`와 같은 계산식을 사용하며, 공개 seed에서의 더 안정적인 추정치일 뿐 held-out Kaggle 점수는 아닙니다.
+## 단일 inference 정책
+
+```text
+State observation
+  → learned Stage ACT stage/gate supervisor를 매 step 실행
+  → stage별 실행 horizon만큼 decoder chunk를 buffer에 저장
+  → buffer action을 순서대로 실행
+  → stage 전환 또는 recovery 승인 시 해당 env의 남은 buffer 폐기
+  → 새 stage에서 즉시 replan
+  → learned gripper logit을 짧게 안정화
+```
+
+- state dimension: Easy 54, Medium 72, Hard 90
+- trained history/chunk: checkpoint의 설정 사용
+- 실행 horizon: `pick=2, carry=6, place=2, done=1`
+- gripper 변경: `abs(logit) >= 0.5`인 반대 명령이 2번 연속일 때 적용
+- 공식 evaluator의 199-action batch 경계에서 history, stage, buffer, gripper latch 자동 초기화
+- action: `(N,4)`, `[-1,1]`, `+1=open`, `-1=close`
+
+`pick`과 `place` 시연에는 OPEN/CLOSE가 모두 있으므로 stage 이름으로 gripper를 강제하지 않습니다. gripper FSM은 모델이 학습한 logit만 안정화합니다.
+
+## Colab에서 영상 보기
+
+공식 `eval.py`는 각 실행마다 render와 scene sensor view가 포함된 MP4를 생성합니다. 노트북의 video player 셀에서 다음 값을 정합니다.
+
+```python
+VIDEO_LEVEL = 'easy'     # easy, medium, hard
+VIDEO_WIDTH = 960
+DOWNLOAD_VIDEO = False   # True면 재생한 MP4도 다운로드
+```
+
+각 평가 바로 뒤의 영상 셀은 checkpoint가 있는 난이도마다 최신 MP4 하나를 찾아 Colab 출력에 inline player로 표시합니다.
+
+```python
+show_all_official_videos('smoke')
+show_all_official_videos('default')
+show_all_official_videos('public_100ep')
+```
+
+한 난이도만 다시 보려면 `show_official_video('smoke', 'hard')`처럼 호출합니다. 평가 실행은 GitHub 업로드를 호출하지 않습니다. 로그와 MP4의 GitHub 백업은 별도 선택 셀의 `BACKUP_EVAL_RESULTS=True`로 실행하며, 업로드 실패가 영상 재생이나 다음 난이도 평가를 중단하지 않습니다. 학습 checkpoint 자동 백업은 기존대로 유지됩니다.
+
+Colab의 구형 IPython에도 맞도록 `Video(str(video), embed=True)`처럼 경로를 첫 인자로 전달합니다. `filename=`만 전달하면 일부 버전에서 `os.path.exists(None)` 오류가 납니다. 평가 셀을 중지하면 하위 evaluator를 종료하고 로그 파일을 닫습니다.
+
+## 이미 학습한 런타임에서 오류를 복구하기
+
+[`moveboxes_stage_runtime_repair.ipynb`](../../notebooks/moveboxes_stage_runtime_repair.ipynb)의 코드 셀을 현재 학습 노트북 아래에 순서대로 복사합니다. 또는 같은 디렉터리의 `moveboxes_stage_runtime_repair.py`를 같은 kernel의 globals에서 실행합니다.
+
+- 같은 run의 중단 후 남은 공식 평가 프로세스만 정리합니다.
+- 기존 candidate의 checkpoint와 policy sidecar를 수정하지 않습니다.
+- 이미 저장된 smoke 영상을 먼저 재생합니다.
+- `run_missing_smoke()`는 영상이 없는 난이도만 공식 평가하며 업로드를 호출하지 않습니다.
+- 마지막 선택 셀은 optimizer/RNG와 recovery 데이터를 포함한 현재 run 전체를 PC ZIP으로 내려받습니다.
+
+새 런타임에서는 원래 학습 노트북의 01~05로 같은 run을 GitHub에서 복구해야 합니다. `/content`에만 있는 파일은 런타임 삭제 시 사라집니다. GitHub의 마지막 완료 snapshot 또는 다운로드한 전체 run ZIP이 복구 근거입니다. 영상 재생 오류와 업로드 오류를 수정해도 이미 기록된 SORT ACCURACY 점수는 바뀌지 않습니다.
+
+## 집기 조준을 위한 짧은 보정 학습
+
+`stage_pick_diagnose.py`는 현재 packaged policy를 그대로 실행하면서 TCP/parcel XYZ, 실제 action, gripper logit, grasp flag, stage/gate를 기록합니다. state의 TCP/첫 parcel 위치를 simulator의 실제 pose와 대조한 후 높이를 해석합니다. 이 기록은 새로운 점수가 아닙니다.
+
+`stage_pick_finetune.prepare_pick_finetune(experiment, CANDIDATE, 'easy')`는 별도 `_pick_refine_v1` run을 준비합니다. 기본값은 2,000 iteration, 기존 초기 학습률의 20%, 첫 집기 구간 sampling 50%입니다. 현재 candidate의 정확한 가중치와 normalization 및 완료된 recovery 데이터를 가져오며 원래 run과 제출본은 수정하지 않습니다. stage별 실행 horizon과 episode step 제한도 유지합니다.
+
+처음 보정할 때 optimizer는 새로 시작합니다. 보정 도중 끊긴 후에는 동일한 job으로 `train_pick_finetune(child, 'easy')`를 재실행하여 보정 run의 model/optimizer/scaler/RNG를 복구합니다. 현재 dataset에서 first-pick sampling 기능은 trainer에 있지만 `StageExperiment.train`이 이 설정을 전달하지 않으므로, 보정 helper는 준비한 job을 직접 실행합니다. 기존 run의 `total_iters`만 변경하지 마세요.
+
+100-episode 평가는 점수 계산 후 별도의 짧은 video rollout을 저장하므로 100 episode 전체를 영상으로 만드는 것은 아닙니다. 영상은 현재 integrated Stage ACT policy가 실제 simulator에서 실행한 결과입니다.
+## 결과 위치
+
+- 현재 학습: `/content/moveboxes_runs/moveboxes_stage_chunk_deadline_v1_benchmark`
+- 기본 평가 checkpoint: `<run>/<level>/checkpoints/latest.pt` (`best_val.pt`는 loss 기반이라 자동 선택하지 않음)
+- 공식 평가 로그·영상: `<run>/<level>/integrated_official_eval`
+- candidate: `<run>/integrated_candidate.zip`
+- 원격 복구: GitHub Release `run-moveboxes_stage_chunk_deadline_v1_benchmark`
+
+candidate에는 inference source, 현재 run checkpoint 사본, 새 policy sidecar, `submission.yaml`, SHA256 provenance manifest만 포함합니다. recovery expert와 training 코드는 제출 ZIP에 포함하지 않습니다.
+
+## 로컬 검증 범위
+
+- stage-aware buffer 순차 실행과 최신 history replan
+- env별 stage transition 및 same-stage recovery invalidation
+- learned gripper hysteresis
+- manual reset 및 공식 fixed episode boundary reset
+- 54/72/90차원 checkpoint load와 action shape/range
+- notebook code cell compile
+- Stage ACT 전체 테스트
+
+로컬 Windows에는 ManiSkill/SAPIEN GPU 환경이 없으므로 실제 물리 rollout은 Colab의 integrated sanity와 official smoke 셀에서 처음 실행합니다.
