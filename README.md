@@ -1,5 +1,8 @@
 # moveBoxes
 
+**검증된 State Stage ACT로 학습 없이 A/B/C 비교:** [Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_compare_colab.ipynb) · [코드 분석·실행 안내](ver2/stages/CHUNK_COMPARE.md).
+Easy 100%와 Medium 40.625% 기록의 실제 체크포인트·정책 해시를 확인했습니다. 기존 정책을 보존하고 stage별 chunk 및 학습 gripper 출력 필터를 비교합니다. **새 B/C 성능은 아직 측정하지 않았습니다.**
+
 **공개 사전학습 모델을 쓰는 RGB 공동 학습:** [SmolVLA + Octo 통합 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/foundation/notebooks/moveboxes_foundation_both_colab.ipynb) · [설명](foundation/README.md).
 각 모델은 Easy·Medium·Hard RGB 시연 600개를 처음부터 함께 보며, 같은 최고 adapter 하나를 세 난이도에서 평가합니다. 모델과 시뮬레이터 의존성은 서로 다른 Python 환경에 격리했습니다.
 

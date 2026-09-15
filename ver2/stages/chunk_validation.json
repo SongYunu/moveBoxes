@@ -1,0 +1,368 @@
+{
+  "identity": {
+    "easy": {
+      "sort_accuracy": 1.0,
+      "n_episodes": 100,
+      "recorded_checkpoint": "/content/moveboxes_runs/moveboxes_easy_lab_v1_benchmark/easy/checkpoints/block_03.pt",
+      "checkpoint_sha256": "0fbbef92aacc5cbe5642568ec5bd349979934e50f3d03d5120ccd5350720ef19",
+      "matches_score_checkpoint": true,
+      "format": "moveboxes-stage-act-v1",
+      "step": 6000,
+      "model_config": {
+        "state_dim": 54,
+        "history": 16,
+        "chunk_size": 16,
+        "width": 128,
+        "heads": 4,
+        "layers": 2,
+        "latent_dim": 16
+      },
+      "stage_parameters": {
+        "stage_embedding.weight": [
+          4,
+          128
+        ],
+        "supervisor.0.weight": [
+          256
+        ],
+        "supervisor.0.bias": [
+          256
+        ],
+        "supervisor.1.weight": [
+          128,
+          256
+        ],
+        "supervisor.1.bias": [
+          128
+        ],
+        "stage_head.weight": [
+          4,
+          128
+        ],
+        "stage_head.bias": [
+          4
+        ],
+        "gate_head.weight": [
+          3,
+          128
+        ],
+        "gate_head.bias": [
+          3
+        ]
+      },
+      "strict_load_missing": [],
+      "strict_load_unexpected": [],
+      "current_policy_sha256": "9b20b569c5ae10893cb8ad0400af2a927d93465366b61c20fdd56d16041f1048",
+      "recorded_policy_sha256": "9b20b569c5ae10893cb8ad0400af2a927d93465366b61c20fdd56d16041f1048",
+      "policy_source_matches": true,
+      "evaluator_source_matches": true,
+      "max_steps": 200
+    },
+    "medium": {
+      "sort_accuracy": 0.40625,
+      "n_episodes": 8,
+      "recorded_checkpoint": "/content/moveboxes_runs/moveboxes_medium_lab_v1_benchmark/medium/checkpoints/block_02.pt",
+      "checkpoint_sha256": "f7c0d5edf5b2bd6b93918d10af43b9c4ee023befd3162139e391b371e1541730",
+      "matches_score_checkpoint": true,
+      "format": "moveboxes-stage-act-v1",
+      "step": 4000,
+      "model_config": {
+        "state_dim": 72,
+        "history": 16,
+        "chunk_size": 16,
+        "width": 128,
+        "heads": 4,
+        "layers": 2,
+        "latent_dim": 16
+      },
+      "stage_parameters": {
+        "stage_embedding.weight": [
+          4,
+          128
+        ],
+        "supervisor.0.weight": [
+          256
+        ],
+        "supervisor.0.bias": [
+          256
+        ],
+        "supervisor.1.weight": [
+          128,
+          256
+        ],
+        "supervisor.1.bias": [
+          128
+        ],
+        "stage_head.weight": [
+          4,
+          128
+        ],
+        "stage_head.bias": [
+          4
+        ],
+        "gate_head.weight": [
+          3,
+          128
+        ],
+        "gate_head.bias": [
+          3
+        ]
+      },
+      "strict_load_missing": [],
+      "strict_load_unexpected": [],
+      "current_policy_sha256": "9b20b569c5ae10893cb8ad0400af2a927d93465366b61c20fdd56d16041f1048",
+      "recorded_policy_sha256": "9b20b569c5ae10893cb8ad0400af2a927d93465366b61c20fdd56d16041f1048",
+      "policy_source_matches": true,
+      "evaluator_source_matches": true,
+      "max_steps": 200
+    }
+  },
+  "checkpoint_audit": {
+    "easy": {
+      "format": "moveboxes-stage-act-v1",
+      "step": 6000,
+      "checkpoint_sha256": "0fbbef92aacc5cbe5642568ec5bd349979934e50f3d03d5120ccd5350720ef19",
+      "model_config": {
+        "state_dim": 54,
+        "history": 16,
+        "chunk_size": 16,
+        "width": 128,
+        "heads": 4,
+        "layers": 2,
+        "latent_dim": 16
+      },
+      "policy_config": {
+        "model_config": {
+          "state_dim": 54,
+          "history": 16,
+          "chunk_size": 16,
+          "width": 128,
+          "heads": 4,
+          "layers": 2,
+          "latent_dim": 16
+        },
+        "temporal_decay": 0.25,
+        "ensemble_window": 4,
+        "gate_threshold": 0.65,
+        "stage_threshold": 0.6,
+        "act_horizon": 1,
+        "num_inference_steps": 1
+      },
+      "state_fields": {
+        "qpos": [
+          0,
+          9
+        ],
+        "qvel": [
+          9,
+          18
+        ],
+        "tcp_xyz_quaternion": [
+          18,
+          25
+        ],
+        "is_grasped": [
+          25,
+          26
+        ],
+        "parcel_poses": [
+          26,
+          40
+        ],
+        "parcel_tags": [
+          40,
+          44
+        ],
+        "bin_positions": [
+          44,
+          50
+        ],
+        "bin_colors": [
+          50,
+          54
+        ]
+      },
+      "trajectories": 200,
+      "stage_counts": {
+        "pick": 15000,
+        "carry": 3800,
+        "place": 4200,
+        "done": 0
+      },
+      "stage_gripper_counts": {
+        "pick": {
+          "close": 6800,
+          "open": 8200
+        },
+        "carry": {
+          "close": 3800,
+          "open": 0
+        },
+        "place": {
+          "close": 3600,
+          "open": 600
+        },
+        "done": {
+          "close": 0,
+          "open": 0
+        }
+      },
+      "sanity_input": "demonstration replay (not a rollout)",
+      "variants": {
+        "A": {
+          "load_action_reset": "passed",
+          "frames": 40,
+          "decoder_calls": 40
+        },
+        "B": {
+          "load_action_reset": "passed",
+          "frames": 40,
+          "decoder_calls": 19
+        },
+        "C": {
+          "load_action_reset": "passed",
+          "frames": 40,
+          "decoder_calls": 19
+        }
+      }
+    },
+    "medium": {
+      "format": "moveboxes-stage-act-v1",
+      "step": 4000,
+      "checkpoint_sha256": "f7c0d5edf5b2bd6b93918d10af43b9c4ee023befd3162139e391b371e1541730",
+      "model_config": {
+        "state_dim": 72,
+        "history": 16,
+        "chunk_size": 16,
+        "width": 128,
+        "heads": 4,
+        "layers": 2,
+        "latent_dim": 16
+      },
+      "policy_config": {
+        "model_config": {
+          "state_dim": 72,
+          "history": 16,
+          "chunk_size": 16,
+          "width": 128,
+          "heads": 4,
+          "layers": 2,
+          "latent_dim": 16
+        },
+        "temporal_decay": 0.25,
+        "ensemble_window": 4,
+        "gate_threshold": 0.65,
+        "stage_threshold": 0.6,
+        "act_horizon": 1,
+        "num_inference_steps": 1
+      },
+      "state_fields": {
+        "qpos": [
+          0,
+          9
+        ],
+        "qvel": [
+          9,
+          18
+        ],
+        "tcp_xyz_quaternion": [
+          18,
+          25
+        ],
+        "is_grasped": [
+          25,
+          26
+        ],
+        "parcel_poses": [
+          26,
+          54
+        ],
+        "parcel_tags": [
+          54,
+          62
+        ],
+        "bin_positions": [
+          62,
+          68
+        ],
+        "bin_colors": [
+          68,
+          72
+        ]
+      },
+      "trajectories": 200,
+      "stage_counts": {
+        "pick": 31071,
+        "carry": 7727,
+        "place": 8449,
+        "done": 0
+      },
+      "stage_gripper_counts": {
+        "pick": {
+          "close": 13600,
+          "open": 17471
+        },
+        "carry": {
+          "close": 7727,
+          "open": 0
+        },
+        "place": {
+          "close": 7049,
+          "open": 1400
+        },
+        "done": {
+          "close": 0,
+          "open": 0
+        }
+      },
+      "sanity_input": "demonstration replay (not a rollout)",
+      "variants": {
+        "A": {
+          "load_action_reset": "passed",
+          "frames": 40,
+          "decoder_calls": 40
+        },
+        "B": {
+          "load_action_reset": "passed",
+          "frames": 40,
+          "decoder_calls": 18
+        },
+        "C": {
+          "load_action_reset": "passed",
+          "frames": 40,
+          "decoder_calls": 18
+        }
+      }
+    }
+  },
+  "hard_data": {
+    "trajectories": 200,
+    "state_dim": 90,
+    "stage_counts": {
+      "pick": 54550,
+      "carry": 11695,
+      "place": 11400,
+      "done": 0
+    },
+    "stage_gripper_counts": {
+      "pick": {
+        "close": 24344,
+        "open": 30206
+      },
+      "carry": {
+        "close": 11693,
+        "open": 2
+      },
+      "place": {
+        "close": 9207,
+        "open": 2193
+      },
+      "done": {
+        "close": 0,
+        "open": 0
+      }
+    }
+  },
+  "simulation_run": false,
+  "note": "Offline checkpoint/data checks only. Historical scores were not rerun."
+}
