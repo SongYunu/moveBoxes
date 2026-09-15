@@ -28,6 +28,9 @@ class AnchorTests(unittest.TestCase):
         self.assertIn('n_episodes: 8', source)
         self.assertIn('EARLY_STOP_EVALS = 3', source)
         self.assertNotIn("prepare_pick_residual_rl(anchor_exp, 'hard'", source)
+        self.assertIn("manifest['levels']['medium']['selection'] == 'anchor'", source)
+        self.assertIn("checkpoint_sha256'] == ANCHORS['medium']['sha256']", source)
+        self.assertIn('stage_act_verified_anchor_submission', source)
         for cell in notebook['cells']:
             if cell['cell_type'] == 'code':
                 compile(''.join(cell['source']), cell['metadata'].get('id','cell'), 'exec')

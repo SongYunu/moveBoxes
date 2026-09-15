@@ -110,23 +110,25 @@ MEDIUM_USE_GROUP = MEDIUM_BEST['source'] == 'pick_residual_group_rl'
 print('Medium 최종 선택:', MEDIUM_BEST)
 ''', 'pick-residual-medium')
 
-    add('code', '''# 10 · 최고 공식 점수만 패키징 · 전체 난이도 재검증 · ZIP
-selected = {'medium':Path(MEDIUM_BEST['checkpoint'])} if MEDIUM_USE_GROUP else {}
-FINAL = package(anchor_exp, checkpoint_overrides=selected,
-                folder_name='final_pick_residual_candidate')
+    add('code', '''# 10 · 검증 앵커를 기본 제출로 고정 · 전체 난이도 재검증 · ZIP
+# Medium 8-seed 34.4%를 기록한 모델은 별도 RL 모델이 아니라 이 anchor.pt입니다.
+selected = {}
+FINAL = package(anchor_exp, folder_name='final_verified_anchor_candidate')
+manifest = json.loads((FINAL/'manifest.json').read_text(encoding='utf-8'))
+assert manifest['levels']['medium']['selection'] == 'anchor'
+assert manifest['levels']['medium']['checkpoint_sha256'] == ANCHORS['medium']['sha256']
 FINAL_RESULTS = {level:run_official(FINAL, level, 'final_default', OFFICIAL_DEFAULT)
                  for level in ('easy','medium','hard')}
-print(json.dumps({'selected':{k:str(v) for k,v in selected.items()},
+print('DEFAULT Medium = verified block_02.pt anchor · selection score 34.4% on seeds 63000..63007')
+print(json.dumps({'selected':selected,
                   'official_results':FINAL_RESULTS}, indent=2))
-archive = shutil.make_archive(str(RUN_DIR/'stage_act_pick_residual_submission'),
+archive = shutil.make_archive(str(RUN_DIR/'stage_act_verified_anchor_submission'),
                               'zip', root_dir=FINAL)
-if MEDIUM_USE_GROUP:
-    demo_dir = Path(MEDIUM_BEST['log']).parent/'videos'
-    demo_videos = sorted(demo_dir.rglob('*.mp4'), key=lambda p:p.stat().st_mtime)
-    if demo_videos:
-        print(f"Medium BEST-CASE DEMO · 공식 선택 회차 {MEDIUM_BEST['iteration']} · "
-              f"해당 회차 SORT ACCURACY {MEDIUM_BEST['score']:.1%}")
-        display(Video(str(demo_videos[-1]), embed=True, width=900))
+demo_dir = Path(BASELINE_RESULTS['medium']['log']).parent/'videos'
+demo_videos = sorted(demo_dir.rglob('*.mp4'), key=lambda p:p.stat().st_mtime)
+if demo_videos:
+    print('Medium ANCHOR DEMO · 8-seed selection SORT ACCURACY 34.4%')
+    display(Video(str(demo_videos[-1]), embed=True, width=900))
 from google.colab import files
 files.download(archive)
 ''', 'pick-residual-package')
