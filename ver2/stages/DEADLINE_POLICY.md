@@ -126,6 +126,14 @@ Colab의 구형 IPython에도 맞도록 `Video(str(video), embed=True)`처럼 �
 
 새 런타임에서는 원래 학습 노트북의 01~05로 같은 run을 GitHub에서 복구해야 합니다. `/content`에만 있는 파일은 런타임 삭제 시 사라집니다. GitHub의 마지막 완료 snapshot 또는 다운로드한 전체 run ZIP이 복구 근거입니다. 영상 재생 오류와 업로드 오류를 수정해도 이미 기록된 SORT ACCURACY 점수는 바뀌지 않습니다.
 
+## 집기 조준을 위한 짧은 보정 학습
+
+`stage_pick_diagnose.py`는 현재 packaged policy를 그대로 실행하면서 TCP/parcel XYZ, 실제 action, gripper logit, grasp flag, stage/gate를 기록합니다. state의 TCP/첫 parcel 위치를 simulator의 실제 pose와 대조한 후 높이를 해석합니다. 이 기록은 새로운 점수가 아닙니다.
+
+`stage_pick_finetune.prepare_pick_finetune(experiment, CANDIDATE, 'easy')`는 별도 `_pick_refine_v1` run을 준비합니다. 기본값은 2,000 iteration, 기존 초기 학습률의 20%, 첫 집기 구간 sampling 50%입니다. 현재 candidate의 정확한 가중치와 normalization 및 완료된 recovery 데이터를 가져오며 원래 run과 제출본은 수정하지 않습니다. stage별 실행 horizon과 episode step 제한도 유지합니다.
+
+처음 보정할 때 optimizer는 새로 시작합니다. 보정 도중 끊긴 후에는 동일한 job으로 `train_pick_finetune(child, 'easy')`를 재실행하여 보정 run의 model/optimizer/scaler/RNG를 복구합니다. 현재 dataset에서 first-pick sampling 기능은 trainer에 있지만 `StageExperiment.train`이 이 설정을 전달하지 않으므로, 보정 helper는 준비한 job을 직접 실행합니다. 기존 run의 `total_iters`만 변경하지 마세요.
+
 100-episode 평가는 점수 계산 후 별도의 짧은 video rollout을 저장하므로 100 episode 전체를 영상으로 만드는 것은 아닙니다. 영상은 현재 integrated Stage ACT policy가 실제 simulator에서 실행한 결과입니다.
 ## 결과 위치
 

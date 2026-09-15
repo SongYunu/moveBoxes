@@ -18,6 +18,8 @@ from build_stage_deadline_notebook import make_notebook as make_deadline_noteboo
 from build_stage_deadline_notebook import CONFIG as DEADLINE_CONFIG
 from build_stage_deadline_notebook import make_runtime_repair_notebook
 from stage_experiment import StageExperiment
+from stage_pick_diagnose import decision_row
+from stage_pick_finetune import prepare_pick_finetune
 
 
 class Controlled(torch.nn.Module):
@@ -59,6 +61,71 @@ def checkpoint(directory, dim=54):
 
 
 class ChunkTests(unittest.TestCase):
+    def test_pick_trace_records_xyz_without_changing_observation_or_action(self):
+        state = torch.zeros(1,54)
+        state[0,18:21] = torch.tensor([.1,.2,.22])
+        state[0,26:29] = torch.tensor([.11,.21,.026])
+        state[0,33:36] = torch.tensor([.4,.4,.026])
+        action = torch.tensor([[.1,-.1,-.2,1.]])
+        initial = state.clone(), action.clone()
+        row = decision_row(10, state, action, dict(stage=torch.tensor([PICK]), accepted=torch.tensor([False])))
+        self.assertEqual(row['nearest_parcel_xy'],0)
+        self.assertAlmostEqual(row['tcp_minus_nearest_parcel_z'],.194,places=5)
+        self.assertEqual(row['stage'], PICK)
+        torch.testing.assert_close(state, initial[0],rtol=0,atol=0)
+        torch.testing.assert_close(action, initial[1],rtol=0,atol=0)
+
+    def test_pick_finetune_prepares_separate_run_from_exact_packaged_weights(self):
+        import contextlib, hashlib
+        from marso_experiment import digest
+
+        class OfflineExperiment:
+            def __init__(self,cfg,sources):
+                self.cfg,self.sources = cfg,sources
+                self.run_dir = Path(cfg['output_root'])/(cfg['run_name']+'_benchmark')
+            def connect(self):
+                self.run_dir.mkdir(parents=True,exist_ok=True)
+            def _stage_helpers(self):
+                pass
+            def persist_operation(self,level):
+                return contextlib.nullcontext()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            names = ('act_v2_model.py','act_v2_data.py','stage_schema.py','stage_labels.py',
+                     'stage_model.py','stage_data.py','stage_train.py')
+            sources = dict.fromkeys(names,'saved-source')
+            parent = OfflineExperiment(dict(output_root=str(root),run_name='protected'),sources)
+            candidate = parent.run_dir/'integrated_candidate'
+            ckdir = candidate/'checkpoints/easy'
+            ckdir.mkdir(parents=True)
+            path,policy = checkpoint(ckdir,54)
+            path.rename(ckdir/'model.pt')
+            policy.update(stage_horizons=dict(pick=2,carry=6,place=2,done=1),stage_aware_chunk=True)
+            (ckdir/'policy_config.json').write_text(json.dumps(policy))
+            (candidate/'manifest.json').write_text(json.dumps(dict(levels=dict(easy=dict(checkpoint_sha256=digest(ckdir/'model.pt'))))))
+            collection = parent.run_dir/'easy/collection'
+            collection.mkdir(parents=True)
+            episode = collection/'episode.npz'
+            episode.write_bytes(b'saved-recovery')
+            (collection/'manifest.json').write_text(json.dumps(dict(complete=True,episodes=[dict(file=episode.name,sha256=digest(episode))])))
+            (parent.run_dir/'easy/stage_train_job.json').write_text(json.dumps(dict(
+                model_config=policy['model_config'],train_config=dict(lr=.0004,total_iters=12000),
+                num_demos=200,data='original-dataset.h5',
+                source_sha256=hashlib.sha256(''.join(sources[n] for n in names).encode()).hexdigest())))
+            preserved = {p:p.read_bytes() for p in parent.run_dir.rglob('*') if p.is_file()}
+            child = prepare_pick_finetune(parent,candidate)
+            job = json.loads((child.run_dir/'easy/stage_train_job.json').read_text())
+            self.assertNotEqual(child.run_dir,parent.run_dir)
+            self.assertEqual(job['train_config']['total_iters'],2000)
+            self.assertAlmostEqual(job['train_config']['lr'],.00008)
+            self.assertEqual(job['train_config']['first_pick_fraction'],.5)
+            self.assertEqual(job['policy_config']['stage_horizons'],policy['stage_horizons'])
+            self.assertEqual((child.run_dir/'easy/initial_model.pt').read_bytes(),(ckdir/'model.pt').read_bytes())
+            self.assertEqual(prepare_pick_finetune(parent,candidate).run_dir,child.run_dir)
+            for path, content in preserved.items():
+                self.assertEqual(path.read_bytes(),content)
+
     def setUp(self):
         torch.set_num_threads(2)
 

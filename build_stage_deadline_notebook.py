@@ -200,7 +200,7 @@ def show_all_official_videos(label):
 ''', 'video-player')
 
     add('code', '''# 공식 eval.py · 1 episode smoke
-import os, subprocess, sys
+import os, signal, subprocess, sys
 RESULTS = RUN_DIR
 SMOKE_CONFIG = RUN_DIR/'integrated_smoke_eval.yaml'
 SMOKE_CONFIG.write_text('eval:\\n  n_episodes: 1\\n  seeds: ['+str(SMOKE_SEED)+']\\n', encoding='utf-8')
@@ -230,12 +230,16 @@ def run_official(level, eval_config, label):
         finally:
             # Colab's stop button interrupts the kernel, not its GPU subprocess.
             if process.poll() is None:
-                process.terminate()
+                previous_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
                 try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                finally:
+                    signal.signal(signal.SIGINT, previous_sigint)
             process.stdout.close()
     if code:
         raise RuntimeError(f'official eval failed ({level}); {log} 확인')
