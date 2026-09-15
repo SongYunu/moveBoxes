@@ -189,9 +189,17 @@ def show_official_video(label, level=None):
         from google.colab import files
         files.download(str(video))
     return video
+
+def show_all_official_videos(label):
+    for level in selected:
+        try:
+            show_official_video(label, level)
+        except FileNotFoundError as error:
+            print(error)
 ''', 'video-player')
 
     add('code', '''# 공식 eval.py · 1 episode smoke
+import os, subprocess, sys
 RESULTS = RUN_DIR
 SMOKE_CONFIG = RUN_DIR/'integrated_smoke_eval.yaml'
 SMOKE_CONFIG.write_text('eval:\\n  n_episodes: 1\\n  seeds: ['+str(SMOKE_SEED)+']\\n', encoding='utf-8')
@@ -217,9 +225,9 @@ def run_official(level, eval_config, label):
             handle.write(line)
             handle.flush()
         code = process.wait()
+        process.stdout.close()
     if code:
         raise RuntimeError(f'official eval failed ({level}); {log} 확인')
-    experiment.sync_level(level)
     return log
 
 for level in selected:
@@ -227,7 +235,7 @@ for level in selected:
 ''', 'official-smoke')
 
     add('code', '''# 방금 생성된 1-episode smoke 영상 바로 보기
-show_official_video('smoke')
+show_all_official_videos('smoke')
 ''', 'video-smoke')
 
     add('code', '''# 공식 conf/eval/default.yaml 평가 · 자체 metric/승자 선택 없음
@@ -240,7 +248,7 @@ print('공식 raw logs/videos:', {level:str(RUN_DIR/level/'integrated_official_e
 ''', 'official-default')
 
     add('code', '''# 방금 생성된 official default 영상 바로 보기
-show_official_video('default')
+show_all_official_videos('default')
 ''', 'video-default')
 
     add('code', '''# 선택 사항 · 공식 eval.py로 100-episode 공개 seed 성능 추정
@@ -259,8 +267,21 @@ print('100-episode 공식 evaluator raw logs:',
 ''', 'official-public-benchmark')
 
     add('code', '''# 선택 실행한 100-episode 평가 영상 보기
-show_official_video('public_100ep')
+show_all_official_videos('public_100ep')
 ''', 'video-public-benchmark')
+
+    add('code', '''# 선택 사항 · 평가 로그/영상 GitHub 백업 (평가·재생과 독립)
+# 학습 checkpoint의 자동 백업은 기존대로 유지됩니다.
+BACKUP_EVAL_RESULTS = False
+if BACKUP_EVAL_RESULTS:
+    for level in selected:
+        try:
+            experiment.sync_level(level)
+            print(level, '평가 결과 GitHub 백업 완료')
+        except Exception as error:
+            print(level, '평가 결과 백업 실패:', error)
+            print('로컬 평가 로그/MP4는 유지됩니다. 영상 재생과 다운로드는 계속 가능합니다.')
+''', 'optional-eval-backup')
 
     add('code', '''# 단일 candidate ZIP 생성 및 브라우저 다운로드
 check = """import json,sys,torch\nfrom pathlib import Path\nfrom types import SimpleNamespace\nfrom stage_chunk_policy import load_policy\nroot=Path(sys.argv[1])\nmanifest=json.loads((root/'manifest.json').read_text())\nfor level,row in manifest['levels'].items():\n p=root/'checkpoints'/level/'model.pt'\n agent=load_policy(p,torch.zeros(1,row['model_config']['state_dim']),SimpleNamespace(shape=(4,)),'cpu')\n a=agent.act(torch.zeros(1,row['model_config']['state_dim']))\n assert a.shape==(1,4) and torch.isfinite(a).all() and a.abs().max()<=1\n agent.reset()\n print(level,'candidate import/action/reset OK')\n"""

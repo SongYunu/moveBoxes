@@ -102,13 +102,15 @@ VIDEO_WIDTH = 960
 DOWNLOAD_VIDEO = False   # True면 재생한 MP4도 다운로드
 ```
 
-각 평가 바로 뒤의 영상 셀은 가장 최근 MP4 하나를 찾아 Colab 출력에 inline player로 표시합니다.
+각 평가 바로 뒤의 영상 셀은 checkpoint가 있는 난이도마다 최신 MP4 하나를 찾아 Colab 출력에 inline player로 표시합니다.
 
 ```python
-show_official_video('smoke')
-show_official_video('default')
-show_official_video('public_100ep')
+show_all_official_videos('smoke')
+show_all_official_videos('default')
+show_all_official_videos('public_100ep')
 ```
+
+한 난이도만 다시 보려면 `show_official_video('smoke', 'hard')`처럼 호출합니다. 평가 실행은 GitHub 업로드를 호출하지 않습니다. 로그와 MP4의 GitHub 백업은 별도 선택 셀의 `BACKUP_EVAL_RESULTS=True`로 실행하며, 업로드 실패가 영상 재생이나 다음 난이도 평가를 중단하지 않습니다. 학습 checkpoint 자동 백업은 기존대로 유지됩니다.
 
 100-episode 평가는 점수 계산 후 별도의 짧은 video rollout을 저장하므로 100 episode 전체를 영상으로 만드는 것은 아닙니다. 영상은 현재 integrated Stage ACT policy가 실제 simulator에서 실행한 결과입니다.
 ## 결과 위치

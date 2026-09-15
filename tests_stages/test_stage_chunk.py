@@ -225,9 +225,10 @@ class ChunkTests(unittest.TestCase):
         self.assertIn('BENCHMARK_EPISODES', deadline_source)
         self.assertIn("run_official(level, BENCHMARK_CONFIG, 'public_100ep')", deadline_source)
         self.assertIn('from IPython.display import Video, display', deadline_source)
-        self.assertIn("show_official_video('smoke')", deadline_source)
-        self.assertIn("show_official_video('default')", deadline_source)
-        self.assertIn("show_official_video('public_100ep')", deadline_source)
+        self.assertIn("show_all_official_videos('smoke')", deadline_source)
+        self.assertIn("show_all_official_videos('default')", deadline_source)
+        self.assertIn("show_all_official_videos('public_100ep')", deadline_source)
+        self.assertIn('BACKUP_EVAL_RESULTS = False', deadline_source)
         self.assertIn('DOWNLOAD_VIDEO = False', deadline_source)
         self.assertIn('SMOKE_SEED', deadline_source)
         self.assertIn('stage_chunk_policy:load_policy', deadline_source)
@@ -240,6 +241,31 @@ class ChunkTests(unittest.TestCase):
         self.assertNotIn('restore_baselines', deadline_source)
         self.assertNotIn('comparison.json', deadline_source)
         self.assertNotIn('MANUAL_SELECTION', deadline_source)
+
+    def test_eval_finishes_all_levels_without_calling_github_backup(self):
+        notebook = make_deadline_notebook()
+        cells = {c['metadata'].get('id'): c for c in notebook['cells']}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            official = root/'official'
+            official.mkdir()
+            (official/'eval.py').write_text(
+                "import sys\nfrom pathlib import Path\n"
+                "output=Path(next(a.split('=',1)[1] for a in sys.argv if a.startswith('hydra.run.dir=')))\n"
+                "(output/'videos').mkdir(parents=True,exist_ok=True)\n"
+                "(output/'videos'/'rollout.mp4').write_bytes(b'test-video')\n"
+                "print('[eval] saved rollout video')\n", encoding='utf-8')
+            def failing_backup(level):
+                raise RuntimeError('GitHub asset upload failed (422)')
+            namespace = dict(RUN_DIR=root, CFG={'repo_dir':str(official)},
+                CANDIDATE=root/'candidate', selected={'easy':None,'medium':None,'hard':None},
+                MAX_STEPS=200, SMOKE_SEED=61000, Path=Path,
+                experiment=SimpleNamespace(sync_level=failing_backup))
+            exec(''.join(cells['official-smoke']['source']), namespace)
+            for level in namespace['selected']:
+                self.assertTrue((root/level/'integrated_official_eval/smoke/videos/rollout.mp4').is_file())
+            backup = ''.join(cells['optional-eval-backup']['source'])
+            exec(backup.replace('BACKUP_EVAL_RESULTS = False','BACKUP_EVAL_RESULTS = True'), namespace)
 
 
 if __name__ == '__main__':
