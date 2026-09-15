@@ -8,7 +8,7 @@ from pathlib import Path
 
 from marso_next_pick import NextPickExperiment
 from marso_experiment import save_json
-from github_store import GitHubStore
+from github_store import AssetUploadError, GitHubStore
 from github_data import download_archive
 
 
@@ -197,8 +197,13 @@ class GitHubExperiment(NextPickExperiment):
                 print('추가 GitHub 백업 실패; 로컬 파일은 남아 있습니다:', error)
             raise
         else:
-            self.sync_level(level)
-            self.sync_common()
+            try:
+                self.sync_level(level)
+                self.sync_common()
+            except AssetUploadError as error:
+                # The subprocess already saved a complete atomic checkpoint.
+                # Keep a successful train/eval result usable and retry later.
+                print('GitHub 최종 백업 지연; 로컬 결과는 정상입니다:', error)
 
     def train(self, level):
         with self.persist_operation(level):

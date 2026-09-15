@@ -355,4 +355,10 @@ def sync_from_env():
     root = Path(key[2])
     files = compact_medium_files(root) if os.environ.get('MOVEBOXES_COMPACT_MEDIUM_SYNC')=='1' and key[3]=='medium' else None
     if os.environ.get('MOVEBOXES_COMPACT_HARD_SYNC')=='1' and key[3]=='hard':files=compact_hard_files(root)
-    _SYNC_STORES[key].sync(root, key[3], files, refresh=False)
+    try:
+        _SYNC_STORES[key].sync(root, key[3], files, refresh=False)
+    except AssetUploadError as error:
+        # A completed local checkpoint is more valuable than aborting GPU work
+        # because GitHub temporarily rejects a Release asset. The next boundary
+        # retries the immutable upload, while latest.pt remains resumable locally.
+        print('GitHub 체크포인트 백업 지연; 로컬 학습은 계속합니다:', error, flush=True)
