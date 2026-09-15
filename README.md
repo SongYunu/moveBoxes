@@ -1,7 +1,7 @@
 # moveBoxes
 
 **State Stage ACT 단일 deadline 정책:** [Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_deadline_colab.ipynb) · [구성과 실행 안내](ver2/stages/DEADLINE_POLICY.md).
-사용자가 지정한 현재 checkpoint에 stage별 chunk, stage/recovery 즉시 replan, learned gripper hysteresis를 한 정책으로 적용합니다. 과거 best는 자동 복원하지 않으며, 성능 수치는 고정한 공식 `eval.py` 출력만 사용합니다. **새 로직의 실제 Colab 점수는 아직 측정하지 않았습니다.**
+GitHub 토큰 인증과 state dataset 검증부터 State Stage ACT 학습, 중단 복구, stage-aware chunk·learned gripper 안정화, 공식 `eval.py` 평가와 ZIP 생성까지 한 Colab에서 실행합니다. Drive는 사용하지 않으며 과거 best는 자동 복원하지 않습니다. **새 로직의 실제 Colab 점수는 아직 측정하지 않았습니다.**
 
 **공개 사전학습 모델을 쓰는 RGB 공동 학습:** [SmolVLA + Octo 통합 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/main/foundation/notebooks/moveboxes_foundation_both_colab.ipynb) · [설명](foundation/README.md).
 각 모델은 Easy·Medium·Hard RGB 시연 600개를 처음부터 함께 보며, 같은 최고 adapter 하나를 세 난이도에서 평가합니다. 모델과 시뮬레이터 의존성은 서로 다른 Python 환경에 격리했습니다.

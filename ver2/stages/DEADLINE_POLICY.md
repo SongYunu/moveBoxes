@@ -1,64 +1,93 @@
-# State Stage ACT 단일 deadline 정책
+# State Stage ACT 단일 deadline 학습·평가
 
 [Colab에서 열기](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_deadline_colab.ipynb)
 
-## 적용한 로직
+## 전체 흐름
+
+```text
+GitHub 토큰 인증
+  → 같은 run_name의 현재 학습 상태 복원
+  → GitHub Release의 state dataset 다운로드·SHA256 검증
+  → recovery 시연 수집
+  → State Stage ACT 학습
+  → 현재 run checkpoint 복사
+  → stage-aware action buffer + transition replan + learned gripper hysteresis
+  → 공식 eval.py smoke/default 평가
+  → candidate ZIP
+```
+
+Google Drive는 사용하지 않습니다. dataset cache, simulator, 학습 결과의 로컬 경로는 모두 `/content` 아래에 있습니다. 런타임이 사라지면 cache는 다시 다운로드하지만, 학습 결과는 GitHub Release에서 복원합니다.
+
+## GitHub 인증과 중단 복구
+
+03 셀은 다음 순서로 토큰을 읽습니다.
+
+1. `GH_TOKEN` 환경변수
+2. Colab Secrets의 `GH_TOKEN`
+3. 화면에 표시되는 비공개 입력창
+
+Fine-grained token은 `SongYunu/moveBoxes` 저장소의 **Contents: Read and write** 권한이 필요합니다. 토큰은 런타임 환경변수에만 둡니다.
+
+기본 `run_name`은 `moveboxes_stage_chunk_deadline_v1`입니다. 이 이름의 Release에는 이 실행에서 만든 상태만 저장됩니다. 과거 Easy/Medium/Hard best를 자동 복원하지 않습니다. 중단 후에는 새 런타임에서 01~05를 다시 실행한 다음, 중단된 난이도의 수집 또는 학습 셀을 다시 실행합니다.
+
+- recovery 수집: 매 시도마다 `manifest.json`과 성공 episode를 동기화
+- 학습: 매 1,000 iteration마다 `latest.pt` 동기화
+- `latest.pt`: model, optimizer, AMP scaler, sampling RNG, CPU RNG, CUDA RNG 포함
+- 설정·데이터·코드 signature가 다르면 잘못 이어 학습하지 않고 중단
+- `training_complete.json`이 있으면 완성 학습을 다시 돌리지 않음
+
+## Colab 실행 순서
+
+1. T4 GPU 런타임을 선택합니다.
+2. 01 CONFIG에서 `run_name`을 확인합니다. 중단 복구 시 이름을 바꾸지 않습니다.
+3. 02에서 지정된 Git branch의 코드를 받습니다.
+4. 03에서 GitHub 토큰을 입력하고 현재 run을 복원합니다.
+5. 04에서 원래 프로젝트와 같은 pinned simulator dependency를 설치합니다.
+6. 05에서 state dataset을 GitHub Release에서 받고 SHA256과 54/72/90차원 데이터를 검사합니다.
+7. 필요한 난이도의 recovery 수집 셀을 실행합니다.
+8. 바로 다음 학습 셀을 실행합니다. loss, 처리 속도, ETA, validation loss와 checkpoint 저장이 셀 출력에 표시됩니다.
+9. 하나 이상의 난이도 학습이 checkpoint를 만들면 integrated candidate 셀부터 실행할 수 있습니다.
+10. official smoke가 성공한 뒤 official default 평가와 ZIP 생성을 실행합니다.
+
+## 단일 inference 정책
 
 ```text
 State observation
-  → 기존 learned Stage ACT의 stage/gate 판단
-  → stage별 action chunk를 buffer에 저장
-  → 순서대로 실행
-  → stage 전환 또는 recovery 승인 시 남은 buffer 즉시 폐기
+  → learned Stage ACT stage/gate supervisor를 매 step 실행
+  → stage별 실행 horizon만큼 decoder chunk를 buffer에 저장
+  → buffer action을 순서대로 실행
+  → stage 전환 또는 recovery 승인 시 해당 env의 남은 buffer 폐기
   → 새 stage에서 즉시 replan
   → learned gripper logit을 짧게 안정화
 ```
 
-한 policy 안에서 모두 동작합니다. deadline Colab은 사용자가 지정한 현재 checkpoint만 사용합니다. 과거 EasyLab/MediumLab이 실제 Stage ACT였다는 검증 결과는 모델 방향의 근거로만 남기며, 해당 best checkpoint를 자동 복원하지 않습니다.
-
-기존 `stage_policy.py`, `StageACT`, training loop와 원본 checkpoint는 수정하지 않습니다. 새 `stage_chunk_policy.py`와 checkpoint 사본·새 sidecar를 별도 candidate 폴더에 둡니다.
-
-## 기본 실행 설정
-
-- State: Easy/Medium/Hard = 54/72/90차원
-- 모델 history: checkpoint에 저장된 값 사용. 검증 모델은 16
-- prediction chunk: checkpoint에 저장된 값 사용. 검증 모델은 16
+- state dimension: Easy 54, Medium 72, Hard 90
+- trained history/chunk: checkpoint의 설정 사용
 - 실행 horizon: `pick=2, carry=6, place=2, done=1`
-- stage/gate threshold: 기존 sidecar 값 사용
-- gripper: decoder가 학습한 logit만 사용
 - gripper 변경: `abs(logit) >= 0.5`인 반대 명령이 2번 연속일 때 적용
-- episode reset: 공식 evaluator의 199-action batch 경계에서 history, stage, buffer, gripper latch 자동 초기화
+- 공식 evaluator의 199-action batch 경계에서 history, stage, buffer, gripper latch 자동 초기화
 - action: `(N,4)`, `[-1,1]`, `+1=open`, `-1=close`
 
-현재 4단계의 `pick`에는 접근·파지·lift가, `place`에는 bin 접근·하강·release가 함께 들어 있습니다. 원본 시연에서도 두 stage에 OPEN/CLOSE가 공존하므로 stage 이름으로 gripper를 강제하지 않습니다. 이는 규칙 기반 controller 제출을 금지한 공식 조건에도 맞지 않습니다.
+`pick`과 `place` 시연에는 OPEN/CLOSE가 모두 있으므로 stage 이름으로 gripper를 강제하지 않습니다. gripper FSM은 모델이 학습한 logit만 안정화합니다.
 
-## Colab 순서
+## 결과 위치
 
-1. T4 GPU 런타임을 선택합니다.
-2. 01 셀의 `CHECKPOINTS`에 현재 사용할 Stage ACT `.pt` 경로를 입력합니다.
-3. checkpoint 옆 `policy_config.json`을 사용할 경우 `USE_SIDECARS=True`를 유지합니다.
-4. 02~04를 실행해 공식 simulator 버전, checkpoint family, state/action shape, buffer, reset, env step을 확인합니다.
-5. 05는 공식 `eval.py`로 1 episode smoke를 실행합니다.
-6. 06은 repository에 고정된 `conf/eval/default.yaml`을 공식 `eval.py`로 실행합니다.
-7. 07은 동일한 단일 policy를 flat import 가능한 candidate ZIP으로 검증·압축합니다.
+- 현재 학습: `/content/moveboxes_runs/moveboxes_stage_chunk_deadline_v1`
+- checkpoint: `<run>/<level>/checkpoints/latest.pt`, `best_val.pt`
+- 공식 평가 로그·영상: `<run>/<level>/integrated_official_eval`
+- candidate: `<run>/integrated_candidate.zip`
+- 원격 복구: GitHub Release `run-moveboxes_stage_chunk_deadline_v1`
 
-결과 로그와 영상은 `MyDrive/moveboxes_stage_deadline/<RUN_NAME>_official_eval`에 남습니다. 출력 수치를 별도로 파싱하거나 다시 계산하지 않습니다. 공식 평가기의 stdout 전체를 `official_eval.log`로 저장합니다.
+candidate에는 inference source, 현재 run checkpoint 사본, 새 policy sidecar, `submission.yaml`, SHA256 provenance manifest만 포함합니다. recovery expert와 training 코드는 제출 ZIP에 포함하지 않습니다.
 
-candidate에는 다음만 들어갑니다.
+## 로컬 검증 범위
 
-- inference source: `stage_chunk_policy.py`, `stage_policy.py`, `stage_model.py`, `stage_schema.py`, `act_v2_model.py`
-- 사용자가 지정한 checkpoint의 사본과 새 `policy_config.json`
-- `submission.yaml`
-- 원본 checkpoint SHA256과 코드 commit을 기록한 `manifest.json`
+- stage-aware buffer 순차 실행과 최신 history replan
+- env별 stage transition 및 same-stage recovery invalidation
+- learned gripper hysteresis
+- manual reset 및 공식 fixed episode boundary reset
+- 54/72/90차원 checkpoint load와 action shape/range
+- notebook code cell compile
+- Stage ACT 전체 테스트
 
-training, weak-label 생성, scripted expert, recovery 수집 코드는 candidate에 포함하지 않습니다.
-
-## 검증 범위
-
-- 세 historical Stage ACT checkpoint의 실제 다운로드, SHA256, strict model load 통과
-- 기존 정책 옵션을 끈 A 경로는 기존 `StagePolicy` 출력과 bitwise 일치
-- buffer 순차 실행, 부분 batch stage 전환, recovery, 불확실 gate, gripper 안정화, episode reset 테스트
-- 전체 Stage test 23개 통과
-- GitHub CI의 Stage ACT, Ver2 ACT, notebook/storage checks 통과
-
-Windows에는 ManiSkill/SAPIEN이 없어 새 단일 로직의 실제 물리 episode는 실행하지 않았습니다. Colab 05의 official smoke가 최초 실제 물리 검증입니다.
+로컬 Windows에는 ManiSkill/SAPIEN GPU 환경이 없으므로 실제 물리 rollout은 Colab의 integrated sanity와 official smoke 셀에서 처음 실행합니다.

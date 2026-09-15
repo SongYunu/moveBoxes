@@ -171,13 +171,22 @@ class ChunkTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_chunk_stage(path, torch.zeros(1,54), SimpleNamespace(shape=(4,)), 'cpu', **base)
 
-    def test_notebook_cells_compile_and_only_evaluate(self):
+    def test_notebook_cells_compile_train_resume_and_official_eval(self):
         deadline = make_deadline_notebook()
         for cell in deadline['cells']:
             if cell['cell_type'] == 'code':
-                compile(''.join(cell['source']), cell['id'], 'exec')
+                compile(''.join(cell['source']), cell.get('id', cell['metadata'].get('id','cell')), 'exec')
         deadline_source = '\n'.join(''.join(c['source']) for c in deadline['cells'])
-        self.assertIn("'easy': ''", deadline_source)
+        self.assertIn("run_name='moveboxes_stage_chunk_deadline_v1'", Path(ROOT/'build_stage_deadline_notebook.py').read_text(encoding='utf-8'))
+        self.assertIn("'output_root': '/content/moveboxes_runs'", deadline_source)
+        self.assertIn('experiment.connect()', deadline_source)
+        self.assertIn('GH_TOKEN', deadline_source)
+        self.assertIn("'save_freq': 1000", deadline_source)
+        self.assertIn("'download_cache': '/content/moveboxes_data_cache'", deadline_source)
+        self.assertIn('experiment.prepare_data()', deadline_source)
+        self.assertIn("experiment.collect('easy')", deadline_source)
+        self.assertIn("experiment.train('easy')", deadline_source)
+        self.assertIn("CHECKPOINT_OVERRIDES = {'easy':'', 'medium':'', 'hard':''}", deadline_source)
         self.assertIn('SMOKE_SEED', deadline_source)
         self.assertIn('stage_chunk_policy:load_policy', deadline_source)
         self.assertIn("UPSTREAM/'eval.py'", deadline_source)
@@ -185,10 +194,10 @@ class ChunkTests(unittest.TestCase):
         self.assertIn('stage_aware_chunk=True', deadline_source)
         self.assertIn('gripper_fsm=True', deadline_source)
         self.assertIn('auto_reset_steps=MAX_STEPS-1', deadline_source)
+        self.assertNotIn('drive.mount', deadline_source)
         self.assertNotIn('restore_baselines', deadline_source)
         self.assertNotIn('comparison.json', deadline_source)
         self.assertNotIn('MANUAL_SELECTION', deadline_source)
-        self.assertNotIn('experiment.train(', deadline_source)
 
 
 if __name__ == '__main__':
