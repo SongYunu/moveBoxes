@@ -165,7 +165,15 @@ def prepare_success_rl(base, level, *, run_suffix='_success_rl_v4_unbounded', it
     previous = read_json(folder/'success_rl_job.json')
     if previous:
         if previous.get('job_signature') != job['job_signature']:
-            raise ValueError('Saved success-RL method differs; change run_suffix')
+            # A bug-fix-only source revision may change source_sha256 while the
+            # optimizer, reward and rollout method remain identical. Preserve
+            # the original signature so already saved optimizer state resumes.
+            compatible = all(previous.get(key) == job.get(key) for key in
+                             ('level','anchor_sha256','fixed_rl_config'))
+            if not compatible:
+                raise ValueError('Saved success-RL method differs; change run_suffix')
+            job['job_signature'] = previous['job_signature']
+            print(f'[{level}] compatible RL source fix accepted; checkpoint signature preserved')
         previous_iterations = previous['rl_config']['iterations']
         if iterations < previous_iterations:
             raise ValueError(f'Cannot reduce an existing RL budget ({previous_iterations} -> {iterations})')

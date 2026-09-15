@@ -34,9 +34,9 @@ from stage_anchor_continue import (ANCHORS, package, prepare, prepare_success_rl
                                    train_success_rl)
 
 MAX_STEPS = 200
-MEDIUM_RL_ITERATIONS = 64  # 양의 정수: 상한 없음. 늘린 뒤 재실행하면 이어서 학습
+MEDIUM_RL_ITERATIONS = 512 # 양의 정수: 상한 없음. 늘린 뒤 재실행하면 이어서 학습
 HARD_RL_ITERATIONS = 64    # 양의 정수: 상한 없음
-RL_EVAL_EVERY = 8
+RL_EVAL_EVERY = 32
 UPSTREAM = Path(CFG['repo_dir'])
 OFFICIAL = UPSTREAM/'conf/eval/default.yaml'
 anchor_exp = prepare(experiment, run_suffix='_anchor_success_base_v1')
@@ -114,7 +114,10 @@ def evaluate_success_round(rl_exp, level, stop, best):
         print(f'{level} {stop}회: 새 최고 공식 점수 {result["score"]:.3%}')
     else:
         print(f'{level} {stop}회: {result["score"]:.3%}; 현재 최고 {best["score"]:.3%} 유지')
-    rl_exp.sync_level(level)
+    try:
+        rl_exp.sync_level(level)
+    except Exception as error:
+        print('GitHub 백업 지연; 로컬 최고 체크포인트는 유지합니다:', error)
     return best
 
 def evaluation_stops(total, every=RL_EVAL_EVERY):
