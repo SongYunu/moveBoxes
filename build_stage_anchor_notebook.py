@@ -162,6 +162,14 @@ FINAL_RESULTS = {level:run_official(FINAL, level, 'final_default')
 print(json.dumps({'selected':{k:str(v) for k,v in selected.items()},
                   'official_results':FINAL_RESULTS}, indent=2))
 archive = shutil.make_archive(str(RUN_DIR/'stage_act_success_rl_submission'), 'zip', root_dir=FINAL)
+# 공식 점수와 분리된, 명시적으로 표시한 최고 체크포인트 데모입니다.
+if globals().get('MEDIUM_USE_RL', False):
+    demo_dir = Path(MEDIUM_BEST['log']).parent/'videos'
+    demo_videos = sorted(demo_dir.rglob('*.mp4'), key=lambda p:p.stat().st_mtime)
+    if demo_videos:
+        print(f"Medium BEST-CASE DEMO · 공식 선택 회차 {MEDIUM_BEST['iteration']} · "
+              f"해당 회차 SORT ACCURACY {MEDIUM_BEST['score']:.1%}")
+        display(Video(str(demo_videos[-1]), embed=True, width=900))
 from google.colab import files
 files.download(archive)
 ''', 'success-rl-package')

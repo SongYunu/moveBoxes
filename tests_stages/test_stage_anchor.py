@@ -33,6 +33,8 @@ class AnchorTests(unittest.TestCase):
         self.assertIn("until_iteration=stop", source)
         self.assertIn("MEDIUM_BEST['source'] == 'success_rl'", source)
         self.assertIn("HARD_BEST['source'] == 'success_rl'", source)
+        self.assertIn('Medium BEST-CASE DEMO', source)
+        self.assertIn("Path(MEDIUM_BEST['log']).parent/'videos'", source)
         self.assertIn('imitation loss를 사용하지 않습니다', source)
         for cell in notebook['cells']:
             if cell['cell_type'] == 'code':
