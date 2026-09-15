@@ -4,7 +4,7 @@ from pathlib import Path
 
 from build_stage_deadline_notebook import make_notebook as base_notebook
 
-IMPLEMENTATION_COMMIT = 'e1a636b2bf327714c0245aac7df192d5a0b5044f'
+IMPLEMENTATION_COMMIT = '3ef846e0452a0ae106a3738f72b1754f877b4da2'
 
 
 def make_notebook():
