@@ -1,5 +1,8 @@
 # moveBoxes
 
+**검증된 난이도별 Stage ACT에서 독립적으로 이어 학습:** [Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_anchor_continue_colab.ipynb).
+Easy 100% 체크포인트는 고정하고, Medium 40.625%와 Hard 4.167% 체크포인트는 각자의 가중치에서 별도로 추가 학습합니다. 한 정책 코드가 난이도에 맞는 체크포인트를 로드하며, 학습 전후 모두 공식 `eval.py`와 영상으로 확인합니다.
+
 **새 가중치 재학습:** [모든 다음 상자 집기 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_all_pick_retrain_colab.ipynb) · [실패 원인 비교](ver2/stages/PICK_REGRESSION_AUDIT.md).
 기존 GitHub 토큰·데이터·T4 준비 후 별도 run에서 처음부터 StageACT를 학습합니다. 모든 상자 집기를 균등하게 보강하며, 매 step XYZ/그리퍼를 재추론합니다. 현재 실패 모델과 과거 best는 초기 가중치로 사용하지 않습니다. 500 step마다 optimizer/RNG를 백업하고 각 난이도의 공식 평가와 영상을 표시합니다. 실제 새 모델 점수는 아직 측정하지 않았습니다.
 

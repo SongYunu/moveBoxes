@@ -80,6 +80,8 @@ class StageExperiment(GitHubExperiment):
         cfg = {k:self.cfg[k] for k in ('seed','batch_size','lr','save_freq','warmup_steps','kl_weight',
             'position_noise','validation_batches','amp','console_interval_seconds','stage_loss_weight','gate_loss_weight',
             'action_training_mode')}
+        if 'first_pick_fraction' in self.cfg:
+            cfg['first_pick_fraction'] = self.cfg['first_pick_fraction']
         smoke = self.cfg['profile']=='smoke'
         cfg['total_iters'] = 100 if smoke else self.cfg['total_iters'][level]
         if smoke:
