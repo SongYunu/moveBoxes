@@ -98,3 +98,29 @@ def train_pick_finetune(child, level):
     with child.persist_operation(level):
         child.run([sys.executable, str(child.repo/'stage_train.py'), str(job_path)],
                   cwd=child.repo, log=folder/'train.log')
+
+
+def package_pick_finetune(child, candidate, level):
+    """Same integrated policy; replace only this level in a separate candidate."""
+    import torch
+    candidate = Path(candidate)
+    target = child.run_dir/'integrated_candidate'
+    if target.resolve() == candidate.resolve():
+        raise ValueError('Cannot overwrite the original candidate')
+    latest = child.run_dir/level/'checkpoints/latest.pt'
+    job = read_json(child.run_dir/level/'stage_train_job.json')
+    saved = torch.load(latest, map_location='cpu', weights_only=True)
+    if saved['format'] != 'moveboxes-stage-act-v1' or saved['model_config'] != job['model_config']:
+        raise ValueError('Fine-tune checkpoint architecture mismatch')
+    shutil.copytree(candidate, target, dirs_exist_ok=True)
+    ckdir = target/'checkpoints'/level
+    shutil.copy2(latest, ckdir/'model.pt')
+    save_json(ckdir/'policy_config.json', job['policy_config'])
+    manifest = read_json(target/'manifest.json')
+    manifest['run_name'] = child.cfg['run_name']
+    manifest['levels'][level].update(source=str(latest), checkpoint_sha256=digest(latest),
+        step=saved['step'], model_config=saved['model_config'], policy_config=job['policy_config'])
+    manifest['pick_finetune_origin'] = read_json(child.run_dir/level/'pick_finetune_origin.json')
+    save_json(target/'manifest.json', manifest)
+    print('Separate integrated candidate:', target, flush=True)
+    return target

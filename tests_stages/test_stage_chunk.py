@@ -19,7 +19,7 @@ from build_stage_deadline_notebook import CONFIG as DEADLINE_CONFIG
 from build_stage_deadline_notebook import make_runtime_repair_notebook
 from stage_experiment import StageExperiment
 from stage_pick_diagnose import decision_row
-from stage_pick_finetune import prepare_pick_finetune
+from stage_pick_finetune import prepare_pick_finetune, package_pick_finetune
 
 
 class Controlled(torch.nn.Module):
@@ -123,6 +123,16 @@ class ChunkTests(unittest.TestCase):
             self.assertEqual(job['policy_config']['stage_horizons'],policy['stage_horizons'])
             self.assertEqual((child.run_dir/'easy/initial_model.pt').read_bytes(),(ckdir/'model.pt').read_bytes())
             self.assertEqual(prepare_pick_finetune(parent,candidate).run_dir,child.run_dir)
+            latest = child.run_dir/'easy/checkpoints/latest.pt'
+            latest.parent.mkdir(parents=True)
+            weights = torch.load(ckdir/'model.pt',weights_only=True)
+            weights['step'] = 2000
+            torch.save(weights,latest)
+            packaged = package_pick_finetune(child,candidate,'easy')
+            self.assertNotEqual(packaged,candidate)
+            updated = json.loads((packaged/'manifest.json').read_text())
+            self.assertEqual(updated['levels']['easy']['step'],2000)
+            self.assertEqual(updated['levels']['easy']['policy_config']['stage_horizons'],policy['stage_horizons'])
             for path, content in preserved.items():
                 self.assertEqual(path.read_bytes(),content)
 
