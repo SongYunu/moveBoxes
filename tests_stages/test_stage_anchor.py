@@ -11,6 +11,7 @@ sys.path[:0] = [str(ROOT/'ver2/stages'), str(ROOT/'ver2'), str(ROOT)]
 import torch
 from build_stage_anchor_notebook import make_notebook
 from build_stage_pick_residual_notebook import make_notebook as make_residual_notebook
+from build_stage_policy_sweep_notebook import make_notebook as make_policy_sweep_notebook
 from stage_anchor_continue import ANCHORS, DIMS, package
 from stage_model import PickResidualStageACT, StageACT
 from stage_pick_residual_rl import group_relative_advantages, group_update, trailing_pick_mask
@@ -18,6 +19,24 @@ from stage_success_rl import bernoulli_kl_from_logits, discounted_returns, spars
 
 
 class AnchorTests(unittest.TestCase):
+    def test_policy_sweep_keeps_weights_and_uses_separate_confirmation_seeds(self):
+        notebook = make_policy_sweep_notebook()
+        source = '\n'.join(''.join(cell['source']) for cell in notebook['cells'])
+        self.assertNotIn('drive.mount', source)
+        self.assertIn('SCREEN_SEEDS = list(range(64000, 64008))', source)
+        self.assertIn('CONFIRM_SEEDS = list(range(65000, 65016))', source)
+        self.assertIn('MIN_EXTRA_SORTED = 2', source)
+        self.assertIn("'baseline_w4_d025'", source)
+        self.assertIn("'responsive_w4_d150'", source)
+        self.assertIn("checkpoint_sha256'] == ANCHORS['medium']['sha256']", source)
+        self.assertIn("policy_overrides = {'medium':SELECTED_OVERRIDES}", source)
+        self.assertIn("UPSTREAM/'eval.py'", source)
+        self.assertNotIn('prepare_success_rl(', source)
+        self.assertNotIn('prepare_pick_residual_rl(', source)
+        for cell in notebook['cells']:
+            if cell['cell_type'] == 'code':
+                compile(''.join(cell['source']), cell['metadata'].get('id','cell'), 'exec')
+
     def test_pick_residual_notebook_is_restartable_and_uses_robust_selection(self):
         notebook = make_residual_notebook()
         source = '\n'.join(''.join(cell['source']) for cell in notebook['cells'])
