@@ -1,6 +1,8 @@
-# 검증된 State Stage ACT의 추론 비교
+# 현재 State Stage ACT의 deadline 추론 비교
 
-[A/B/C Colab 열기](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_compare_colab.ipynb)
+[현재 checkpoint용 A/B/C Colab 열기](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_deadline_colab.ipynb)
+
+기본 Colab은 과거 best를 자동 복원하지 않습니다. 01 셀의 `CHECKPOINTS`에 현재 사용할 State Stage ACT 경로를 지정합니다. 과거 hash-pinned 모델은 `USE_KNOWN_BASELINES=True`로 명시한 경우에만 선택 기능으로 복원합니다.
 
 ## 결론과 기존 모델 확인
 
@@ -10,11 +12,11 @@
 |---|---|---:|---|
 | Easy 100 episode, sort accuracy 100% | EasyLab `block_03.pt` | 6,000 | `0fbbef92aacc5` |
 | Medium 8 episode, sort accuracy 40.625% | MediumLab `block_02.pt` | 4,000 | `f7c0d5edf5b2b` |
-| Hard 8 episode, sort accuracy 4.167% | Hard Stage v1 `best_val.pt` | 로컬 가중치 미확인 | 기록상 `96d30fe99cdf6` |
+| Hard 8 episode, sort accuracy 4.167% | Hard Stage v1 `best_val.pt` | 18,000 | `96d30fe99cdf6` |
 
 Easy/Medium 실제 PT의 SHA256이 각 점수 파일의 `protocol.checkpoint_sha256`과 일치합니다. 두 PT는 `moveboxes-stage-act-v1` 형식이며 `stage_embedding(4,128)`, `stage_head(4,128)`, `gate_head(3,128)` 가중치가 존재합니다. 현재 StageACT로 `strict=True` 로딩했을 때 누락·추가 키가 없습니다. 평가 당시 정책·평가기 소스 해시도 현재 기존 소스와 일치합니다. 따라서 성공 모델은 **EasyLab/MediumLab에서 보정한 Stage ACT**입니다. 초기 Stage ACT v1 Easy 0% 체크포인트와 혼동하면 안 됩니다.
 
-위 결과는 과거 서로 다른 평가 조건/시드 기록입니다. 하나의 새 Overall 점수로 합산하지 않습니다. Hard의 hash는 점수 기록을 기준으로 복원 때 재검증하며, Hard target v2/Object ACT/DP 가중치를 이 로더에 넣으면 명시적으로 거절합니다.
+위 결과는 과거 서로 다른 평가 조건/시드 기록입니다. 하나의 새 Overall 점수로 합산하지 않습니다. 세 PT 모두 공개 Release에서 실제 파일을 받아 기록된 SHA256과 `moveboxes-stage-act-v1` 구조를 재검증했습니다. Hard target v2/Object ACT/DP 가중치를 이 로더에 넣으면 명시적으로 거절합니다.
 
 ## 현재 구현을 읽은 결과
 
@@ -72,7 +74,7 @@ C의 `gripper_fsm`은 **stage별 고정 OPEN/CLOSE FSM이 아닙니다.** 학습
 
 ## 실행
 
-새 Colab의 01~05를 순서대로 실행합니다. 기존 프로젝트와 같은 simulator 버전을 사용하고 이미 설치된 패키지는 업그레이드하지 않습니다. 복원은 기존 GitHub 인증을 이용한 읽기 전용 작업이며 정확한 hash의 가중치만 별도 디렉터리로 다운로드합니다. 최신 모델로 임의 대체하지 않습니다.
+새 Colab의 01~06을 순서대로 실행합니다. 기존 프로젝트와 같은 simulator 버전을 사용하고 이미 설치된 패키지는 업그레이드하지 않습니다. 공개 GitHub Release의 URL·파일 크기·SHA256을 코드에 고정했기 때문에 GitHub 토큰 없이 정확한 가중치만 별도 디렉터리로 다운로드합니다. 최신 모델로 임의 대체하지 않습니다. 결과는 기본적으로 Google Drive의 `MyDrive/moveboxes_stage_compare/abc_8seeds_v1`에 episode마다 저장됩니다.
 
 처음에는 `SEEDS=[61000]`과 별도 `OUTPUT`으로 1 episode smoke를 실행할 수 있습니다. 이후 8개 seed와 새 output으로 A/B/C를 비교하세요. 이번 작업에서는 Colab 연결이 없어 실제 simulator episode/점수를 생성하지 않았습니다.
 
@@ -99,7 +101,7 @@ python /content/moveBoxes_stage_compare/ver2/stages/stage_compare.py /content/st
 - `comparison.json`, `comparison.md`: Easy/Medium/Hard/Overall 표. 미실행 난이도는 N/A, 세 난이도를 모두 완료했을 때만 `0.2/0.3/0.5` Overall을 계산합니다.
 - episode별 실제 sort/mis-sort metric, 파지 관측 여부, gripper 반전, stage 체류, decode 호출 수, 시간 제한까지 미완료 여부를 기록합니다. carry 중 grasp 소실은 `possible_carry_drops`라는 진단용 추정치이며 실제 drop 정답으로 취급하지 않습니다.
 
-새 결과가 기존 A보다 좋은지 확인하기 전에는 best/sidecar를 교체하지 마세요. 비교 seed로 고른 정책은 별도 최종 seed에서 평가해야 합니다.
+새 결과가 기존 A보다 좋은지 확인하기 전에는 best/sidecar를 교체하지 마세요. deadline Colab은 선택 결과를 원본과 분리된 `_candidate` 폴더에 복사하고, 제출용 flat module import와 실제 checkpoint action을 다시 검사한 뒤 ZIP을 만듭니다. 비교 seed로 고른 정책은 별도 최종 seed에서 평가해야 합니다.
 
 ## 로컬 검증
 
@@ -109,4 +111,4 @@ python /content/moveBoxes_stage_compare/ver2/stages/stage_compare.py /content/st
 python -m unittest discover -s tests_stages -v
 ```
 
-새 B/C의 실제 시뮬레이션 성능 및 Hard best 실물 로딩은 아직 검증하지 않았습니다. Windows 개발 환경에는 ManiSkill/SAPIEN이 없어 Colab에서 확인해야 합니다.
+세 historical checkpoint의 실제 다운로드·SHA256·모델 로딩·A/B/C synthetic action/reset 검사는 통과했습니다. 새 B/C의 실제 시뮬레이션 성능은 아직 검증하지 않았습니다. Windows 개발 환경에는 ManiSkill/SAPIEN이 없어 Colab에서 확인해야 합니다.

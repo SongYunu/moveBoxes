@@ -17,6 +17,7 @@ from stage_schema import PICK, CARRY, PLACE, COMPLETE, RECOVER
 from stage_compare import evaluate, summarize, variant_config, load_spec
 from stage_compare_restore import restore_baselines
 from build_stage_compare_notebook import make_notebook
+from build_stage_deadline_notebook import make_notebook as make_deadline_notebook
 
 
 class Controlled(torch.nn.Module):
@@ -218,32 +219,39 @@ class ChunkTests(unittest.TestCase):
         self.assertNotIn('experiment.train(', source)
         self.assertNotIn('experiment.collect(', source)
         self.assertNotIn('pip\', \'install\', \'--upgrade', source)
+        self.assertNotIn('github_token', source)
+        self.assertIn('USE_DRIVE = True', source)
+        self.assertIn('--audit-only', source)
+
+        deadline = make_deadline_notebook()
+        for cell in deadline['cells']:
+            if cell['cell_type'] == 'code':
+                compile(''.join(cell['source']), cell['id'], 'exec')
+        deadline_source = '\n'.join(''.join(c['source']) for c in deadline['cells'])
+        self.assertIn('USE_KNOWN_BASELINES = False', deadline_source)
+        self.assertIn("'easy': ''", deadline_source)
+        self.assertIn('SMOKE_SEEDS', deadline_source)
+        self.assertIn('COMPARE_SEEDS', deadline_source)
+        self.assertIn('stage_chunk_policy:load_policy', deadline_source)
+        self.assertNotIn('experiment.train(', deadline_source)
 
     def test_restore_is_read_only_hash_pinned_and_never_overwrites_existing_checkpoint(self):
         import hashlib
+        import io
         content = b'checkpoint-fixture'
         sha = hashlib.sha256(content).hexdigest()
-        baseline = dict(easy=dict(run='fixture', checkpoint='best.pt', sha256=sha))
+        baseline = dict(easy=dict(checkpoint='best.pt', sha256=sha, bytes=len(content),
+                                  url='https://example.invalid/best.pt'))
         calls = []
-        class Store:
-            def __init__(self, *args, **kwargs):
-                self.assets = {'snapshot-easy-001.json': {'kind':'snapshot'},
-                               'weights': {'kind':'weights', 'size':len(content)}}
-            def load(self, create):
-                calls.append(('load', create))
-                return True
-            def download(self, asset, path):
-                calls.append(('download', asset['kind']))
-                if asset['kind'] == 'weights':
-                    path.write_bytes(content)
-                else:
-                    path.write_text(json.dumps(dict(version=1, scope='easy', entries=[dict(
-                        sha256=sha, path='easy/checkpoints/best.pt', asset='weights', bytes=len(content))])))
+        def download(request, timeout):
+            calls.append((request.full_url, request.headers.get('User-agent'), timeout))
+            return io.BytesIO(content)
         with tempfile.TemporaryDirectory() as directory:
-            with patch('stage_compare_restore.BASELINES', baseline), patch('stage_compare_restore.GitHubStore', Store):
+            with patch('stage_compare_restore.BASELINES', baseline), \
+                 patch('stage_compare_restore.urllib.request.urlopen', side_effect=download):
                 specs = restore_baselines(directory, ['easy'])
                 self.assertEqual(specs['easy']['checkpoint_sha256'], sha)
-                self.assertIn(('load', False), calls)
+                self.assertEqual(calls, [('https://example.invalid/best.pt', 'moveboxes-colab', 180)])
                 count = len(calls)
                 restore_baselines(directory, ['easy'])
                 self.assertEqual(len(calls), count)
