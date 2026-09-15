@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from act_v2_model import StateACT, state_features, action_loss
-from stage_schema import STAGES, GATES
+from stage_schema import PICK, STAGES, GATES
 
 
 class StageACT(StateACT):
@@ -39,6 +39,30 @@ class StageACT(StateACT):
         x, memory, phase, gate = self.encode(obs, previous_stage)
         prediction, kl = self.decode(x, memory, stage, actions, mask)
         return prediction, kl, phase, gate
+
+
+class PickResidualStageACT(StageACT):
+    """Frozen Stage ACT plus a small state-conditioned correction used only in PICK."""
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        hidden = int(cfg.get('residual_hidden', 64))
+        scale = float(cfg.get('residual_scale', .12))
+        if hidden < 1 or not 0 < scale <= .5:
+            raise ValueError('Invalid pick residual configuration')
+        self.residual_scale = scale
+        self.pick_residual = nn.Sequential(
+            nn.LayerNorm(cfg['width']), nn.Linear(cfg['width'], hidden), nn.GELU(),
+            nn.Linear(hidden, 3))
+        # An untrained residual checkpoint behaves exactly like its Stage ACT anchor.
+        nn.init.zeros_(self.pick_residual[-1].weight)
+        nn.init.zeros_(self.pick_residual[-1].bias)
+
+    def decode(self, x, memory, stage, actions=None, mask=None):
+        prediction, kl = super().decode(x, memory, stage, actions, mask)
+        correction = torch.tanh(self.pick_residual(memory[:, -1]))[:, None, :]
+        correction = correction.expand(-1, self.cfg['chunk_size'], -1)
+        correction = correction*self.residual_scale*(stage == PICK)[:, None, None]
+        return torch.cat((prediction[..., :3]+correction, prediction[..., 3:]), -1), kl
 
 
 def stage_loss(outputs, actions, mask, stages, gates, cfg):

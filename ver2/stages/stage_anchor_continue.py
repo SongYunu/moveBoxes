@@ -213,6 +213,87 @@ def train_success_rl(child, level, until_iteration=None):
                   cwd=child.repo, log=folder/'success_rl.log')
 
 
+def prepare_pick_residual_rl(base, level, *, run_suffix='_pick_residual_group_v1',
+                             iterations=64, num_envs=16, group_size=4, lr=2e-5,
+                             xyz_std=.04, pick_credit_steps=12):
+    """Prepare group-relative PICK residual RL without changing the Stage ACT anchor."""
+    if level not in ('medium','hard') or not run_suffix:
+        raise ValueError('Pick residual RL is available only for Medium/Hard')
+    if (type(iterations) is not int or iterations < 1 or type(num_envs) is not int or
+            type(group_size) is not int or group_size < 2 or num_envs % group_size or
+            not 4 <= num_envs <= 32 or not 0 < lr <= 5e-5 or not 0 < xyz_std <= .1 or
+            type(pick_credit_steps) is not int or not 2 <= pick_credit_steps <= 40):
+        raise ValueError('Invalid pick residual group-RL configuration')
+    cfg = copy.deepcopy(base.cfg)
+    cfg.update(run_name=base.cfg['run_name']+'_'+level+run_suffix)
+    child = type(base)(cfg, dict(base.sources))
+    child.connect(); child._stage_helpers()
+    for difficulty, known in ANCHORS.items():
+        source = base.run_dir/difficulty/'anchor.pt'
+        target = child.run_dir/difficulty/'anchor.pt'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and digest(target) != known['sha256']:
+            raise ValueError('Existing residual-RL anchor differs; change run_suffix')
+        if not target.exists():
+            shutil.copy2(source, target)
+    folder = child.run_dir/level
+    rl = dict(iterations=iterations, num_envs=num_envs, group_size=group_size,
+        max_steps=200, seed=220000, lr=lr, xyz_std=xyz_std,
+        pick_credit_steps=pick_credit_steps, residual_hidden=64, residual_scale=.12,
+        clip_ratio=.1, anchor_kl_weight=.2, update_epochs=2, minibatch_size=256,
+        gate_threshold=.65, stage_threshold=.6)
+    fixed_rl = {key:value for key,value in rl.items() if key != 'iterations'}
+    identity = dict(level=level, anchor_sha256=ANCHORS[level]['sha256'],
+        fixed_rl_config=fixed_rl,
+        source_sha256=hashlib.sha256(child.sources['stage_pick_residual_rl.py'].encode()).hexdigest())
+    identity['job_signature'] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    job = dict(identity, rl_config=rl, folder=str(folder), anchor=str(folder/'anchor.pt'),
+        config_dir=str(child.repo/'conf'))
+    previous = read_json(folder/'pick_residual_rl_job.json')
+    if previous:
+        if previous.get('job_signature') != job['job_signature']:
+            compatible = all(previous.get(key) == job.get(key) for key in
+                             ('level','anchor_sha256','fixed_rl_config'))
+            if not compatible:
+                raise ValueError('Saved pick-residual method differs; change run_suffix')
+            job['job_signature'] = previous['job_signature']
+        previous_iterations = previous['rl_config']['iterations']
+        if iterations < previous_iterations:
+            raise ValueError(f'Cannot reduce an existing group-RL budget ({previous_iterations} -> {iterations})')
+        if iterations > previous_iterations:
+            (folder/'training_complete.json').unlink(missing_ok=True)
+    save_json(folder/'pick_residual_rl_job.json', job)
+    save_json(folder/'pick_residual_rl_origin.json', dict(
+        objective='group-relative terminal success_count on identical reset seeds',
+        frozen='entire Stage ACT anchor', trainable=['pick_residual'],
+        pick_only=True, terminal_reward=True, critic=False,
+        anchor_sha256=ANCHORS[level]['sha256']))
+    print(f'[{level}] PICK residual group RL: {iterations} iterations; '
+          f'{num_envs//group_size} seeds x {group_size} candidates')
+    return child
+
+
+def train_pick_residual_rl(child, level, until_iteration=None):
+    if level not in ('medium','hard'):
+        raise ValueError('Easy anchor is frozen')
+    folder = child.run_dir/level
+    job = folder/'pick_residual_rl_job.json'
+    if not job.is_file():
+        raise FileNotFoundError(job)
+    configured = read_json(job)['rl_config']['iterations']
+    if until_iteration is not None and (type(until_iteration) is not int or
+                                        not 1 <= until_iteration <= configured):
+        raise ValueError('until_iteration must be in 1..configured iterations')
+    if read_json(folder/'training_complete.json'):
+        print(f'[{level}] completed PICK residual checkpoint reused')
+        return
+    with child.persist_operation(level):
+        command = [sys.executable, str(child.repo/'stage_pick_residual_rl.py'), str(job)]
+        if until_iteration is not None:
+            command.append(str(until_iteration))
+        child.run(command, cwd=child.repo, log=folder/'pick_residual_rl.log')
+
+
 def package(child, *, use_trained=None, checkpoint_overrides=None, folder_name='anchor_candidate'):
     """Package one implementation with independently selected per-level weights."""
     import torch
@@ -241,7 +322,10 @@ def package(child, *, use_trained=None, checkpoint_overrides=None, folder_name='
         out.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, out/'model.pt')
         save_json(out/'policy_config.json', config)
-        selection = 'success_rl' if level in overrides else 'trained' if source == trained else 'anchor'
+        selection = ('pick_residual_group_rl' if level in overrides and
+                     saved.get('format') == 'moveboxes-stage-pick-residual-v1' else
+                     'success_rl' if level in overrides else
+                     'trained' if source == trained else 'anchor')
         manifest['levels'][level] = dict(source=str(source), checkpoint_sha256=digest(source),
             selection=selection, step=saved.get('step'), rl_iteration=saved.get('rl_iteration'),
             policy_config=config, historical_anchor_sha256=known['sha256'])

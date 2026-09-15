@@ -4,6 +4,7 @@ from collections import deque
 from pathlib import Path
 import torch
 from stage_model import StageACT
+from stage_model import PickResidualStageACT
 from stage_schema import PICK, HOLD, RECOVER, STAGES, GATES
 
 
@@ -69,14 +70,16 @@ class StagePolicy:
 
 def load_stage(checkpoint, sample_obs, action_space, device, **cfg):
     saved = torch.load(checkpoint, map_location='cpu', weights_only=True)
-    if saved.get('format') != 'moveboxes-stage-act-v1':
-        raise ValueError('Requires a stage ACT checkpoint; old ACT/DP weights cannot be reused')
+    checkpoint_format = saved.get('format')
+    if checkpoint_format not in ('moveboxes-stage-act-v1', 'moveboxes-stage-pick-residual-v1'):
+        raise ValueError('Requires a stage ACT or pick-residual checkpoint')
     state = sample_obs['state'] if isinstance(sample_obs, dict) else sample_obs
     if state.shape[-1] != saved['model_config']['state_dim'] or tuple(action_space.shape) != (4,):
         raise ValueError('Checkpoint/environment shape mismatch')
     if cfg.get('model_config', saved['model_config']) != saved['model_config']:
         raise ValueError('Requested architecture differs from trained checkpoint')
-    model = StageACT(saved['model_config'])
+    model_type = PickResidualStageACT if checkpoint_format == 'moveboxes-stage-pick-residual-v1' else StageACT
+    model = model_type(saved['model_config'])
     model.load_state_dict(saved['model'])
     return StagePolicy(model.to(device), **{k:cfg[k] for k in
         ('gate_threshold','stage_threshold','temporal_decay','ensemble_window','auto_reset_steps') if k in cfg})
