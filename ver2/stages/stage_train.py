@@ -94,8 +94,23 @@ def train(job):
         model.load_state_dict(initial['model'])
         # Keep the saved normalization with the saved weights.
         print(f"보정 학습: 기존 {initial.get('step','?')} step 모델에서 시작, optimizer는 새로 초기화", flush=True)
+    freeze_modules = tuple(cfg.get('freeze_modules', ()))
+    if any(not isinstance(prefix, str) or not prefix for prefix in freeze_modules):
+        raise ValueError('freeze_modules must contain non-empty module prefixes')
+    if freeze_modules:
+        names = [name for name,_ in model.named_parameters()]
+        missing = [prefix for prefix in freeze_modules
+                   if not any(name == prefix or name.startswith(prefix+'.') for name in names)]
+        if missing:
+            raise ValueError(f'Unknown freeze_modules prefixes: {missing}')
+        for name, parameter in model.named_parameters():
+            if any(name == prefix or name.startswith(prefix+'.') for prefix in freeze_modules):
+                parameter.requires_grad_(False)
     model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['lr'], weight_decay=1e-4)
+    trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    if not trainable:
+        raise ValueError('freeze_modules left no trainable parameters')
+    optimizer = torch.optim.AdamW(trainable, lr=cfg['lr'], weight_decay=1e-4)
     amp = bool(cfg['amp'] and device.type == 'cuda')
     scaler = torch.amp.GradScaler('cuda', enabled=amp)
     generator = torch.Generator().manual_seed(cfg['seed']+1)
@@ -114,8 +129,11 @@ def train(job):
             torch.cuda.set_rng_state_all(saved['cuda_rng'])
         start, best = saved['step'], saved['best_validation']
     params = sum(p.numel() for p in model.parameters())
-    print(f"Stage ACT: {params/1e6:.2f}M parameters / {device} / AMP={amp} / resume {start}/{cfg['total_iters']}", flush=True)
-    save_json(folder/'model_info.json', dict(parameters=params, model_config=arch, train_config=cfg))
+    trainable_params = sum(p.numel() for p in trainable)
+    print(f"Stage ACT: {params/1e6:.2f}M parameters ({trainable_params/1e6:.2f}M trainable) / "
+          f"{device} / AMP={amp} / resume {start}/{cfg['total_iters']}", flush=True)
+    save_json(folder/'model_info.json', dict(parameters=params, trainable_parameters=trainable_params,
+        frozen_modules=list(freeze_modules), model_config=arch, train_config=cfg))
     save_json(ckdir/'policy_config.json', job['policy_config'])
     save_json(folder/'train_status.json', dict(status='running', step=start))
     model.train()
