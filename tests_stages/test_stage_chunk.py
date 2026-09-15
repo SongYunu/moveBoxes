@@ -24,7 +24,7 @@ from build_stage_execution_check_notebook import make_notebook as make_execution
 import stage_reference_check
 from stage_pick_sampling import StageWindows as AllPickWindows
 from stage_all_pick_retrain import prepare_retrain, package_retrain
-from build_stage_retrain_notebook import make_notebook as make_retrain_notebook
+from build_stage_retrain_notebook import IMPLEMENTATION_COMMIT,make_notebook as make_retrain_notebook
 
 
 class Controlled(torch.nn.Module):
@@ -182,7 +182,8 @@ class ChunkTests(unittest.TestCase):
 
     def test_retrain_notebook_preserves_bootstrap_and_trains_each_level_fresh(self):
         notebook = make_retrain_notebook()
-        self.assertEqual(notebook['cells'][:5],make_deadline_notebook()['cells'][:5])
+        self.assertEqual(notebook['cells'][:5],make_deadline_notebook(
+            dict(project_ref=IMPLEMENTATION_COMMIT))['cells'][:5])
         source = '\n'.join(''.join(c['source']) for c in notebook['cells'][5:])
         self.assertIn("policy=stage_policy:load_policy",source)
         self.assertNotIn('prepare_pick_finetune(',source)

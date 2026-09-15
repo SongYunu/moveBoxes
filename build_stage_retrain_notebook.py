@@ -3,9 +3,11 @@ import json
 from pathlib import Path
 from build_stage_deadline_notebook import make_notebook as base_notebook
 
+IMPLEMENTATION_COMMIT = '711dfd5caa71acab27aa663bec48b6bc97dcd183'
+
 
 def make_notebook():
-    base = base_notebook()
+    base = base_notebook(dict(project_ref=IMPLEMENTATION_COMMIT))
     original = {c['metadata'].get('id'):c for c in base['cells']}
     cells = base['cells'][:5]
     def add(kind,text,ident):
