@@ -33,7 +33,7 @@ def make_notebook(config=None):
 
 03 셀은 `GH_TOKEN` 환경변수, Colab Secrets, 비공개 입력창 순서로 GitHub 토큰을 받습니다. 같은 `run_name`의 **현재 학습 상태만** GitHub Release에서 복원합니다. 과거 best checkpoint를 자동으로 가져오지 않습니다.
 
-04~05에서 T4 환경과 state dataset을 준비합니다. 각 난이도는 recovery 수집 후 Stage ACT를 학습합니다. 수집은 매 시도, 학습은 매 1,000 iteration마다 GitHub에 동기화됩니다. 런타임이 끊기면 새 런타임에서 01~05와 해당 난이도의 수집·학습 셀을 다시 실행하면 이어집니다.
+04~05에서 T4 환경과 state dataset을 준비합니다. 각 난이도는 recovery 수집 후 Stage ACT를 학습합니다. 수집은 매 시도, 학습은 매 1,000 iteration마다 GitHub에 동기화됩니다. 런타임이 끊기면 새 런타임에서 01~05와 해당 난이도의 수집·학습 셀을 다시 실행하면 이어집니다.\n\n학습 loss는 action imitation + stage/gate classification + KL을 위한 최적화 신호일 뿐 점수가 아닙니다. 제출 성능은 공식 simulator의 SORT ACCURACY = 올바르게 분류한 parcel 수 / 전체 parcel 수로 평가합니다. 기본 candidate는 loss로 고른 `best_val.pt`가 아니라 현재 학습 진행의 latest.pt를 사용합니다.
 ''', 'deadline-guide')
 
     for level in ('easy', 'medium', 'hard'):
@@ -63,7 +63,7 @@ MAX_STEPS = 200
 SMOKE_SEED = 61000
 DIMS = {'easy':54, 'medium':72, 'hard':90}
 
-# 경로를 따로 지정하지 않으면 이 run에서 학습된 best_val/latest만 사용합니다.
+# 경로를 따로 지정하지 않으면 loss로 선택한 best_val이 아니라 이 run의 latest를 사용합니다.
 selected = {}
 for level in DIMS:
     override = CHECKPOINT_OVERRIDES[level]
@@ -71,7 +71,7 @@ for level in DIMS:
         checkpoint = Path(override).expanduser().resolve()
     else:
         folder = RUN_DIR/level/'checkpoints'
-        checkpoint = next((p for p in (folder/'best_val.pt', folder/'latest.pt') if p.is_file()), None)
+        checkpoint = folder/'latest.pt'\n        if not checkpoint.is_file():\n            checkpoint = None
     if checkpoint is not None:
         selected[level] = checkpoint
 if not selected:
@@ -209,6 +209,20 @@ for level in selected:
 print('공식 raw logs/videos:', {level:str(RUN_DIR/level/'integrated_official_eval'/'default') for level in selected})
 ''', 'official-default')
 
+    add('code', '''# 선택 사항 · 공식 eval.py로 100-episode 공개 seed 성능 추정
+# 계산식은 공식 evaluator 그대로이며 held-out Kaggle 점수는 아닙니다.
+BENCHMARK_EPISODES = int(CFG['benchmark_episodes'])
+BENCHMARK_SEEDS = list(range(int(CFG['eval_seed_start']),
+                             int(CFG['eval_seed_start'])+BENCHMARK_EPISODES))
+BENCHMARK_CONFIG = RUN_DIR/'integrated_public_benchmark.yaml'
+BENCHMARK_CONFIG.write_text('eval:\\n  n_episodes: '+str(BENCHMARK_EPISODES)+
+    '\\n  seeds: '+json.dumps(BENCHMARK_SEEDS)+'\\n', encoding='utf-8')
+for level in selected:
+    run_official(level, BENCHMARK_CONFIG, 'public_100ep')
+print('100-episode 공식 evaluator raw logs:',
+      {level:str(RUN_DIR/level/'integrated_official_eval'/'public_100ep'/'official_eval.log')
+       for level in selected})
+''', 'official-public-benchmark')
     add('code', '''# 단일 candidate ZIP 생성 및 브라우저 다운로드
 check = """import json,sys,torch\nfrom pathlib import Path\nfrom types import SimpleNamespace\nfrom stage_chunk_policy import load_policy\nroot=Path(sys.argv[1])\nmanifest=json.loads((root/'manifest.json').read_text())\nfor level,row in manifest['levels'].items():\n p=root/'checkpoints'/level/'model.pt'\n agent=load_policy(p,torch.zeros(1,row['model_config']['state_dim']),SimpleNamespace(shape=(4,)),'cpu')\n a=agent.act(torch.zeros(1,row['model_config']['state_dim']))\n assert a.shape==(1,4) and torch.isfinite(a).all() and a.abs().max()<=1\n agent.reset()\n print(level,'candidate import/action/reset OK')\n"""
 subprocess.run([sys.executable, '-c', check, str(CANDIDATE)], cwd=CANDIDATE, check=True)

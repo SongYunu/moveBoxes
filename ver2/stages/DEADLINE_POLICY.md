@@ -46,9 +46,29 @@ Fine-grained token은 `SongYunu/moveBoxes` 저장소의 **Contents: Read and wri
 6. 05에서 state dataset을 GitHub Release에서 받고 SHA256과 54/72/90차원 데이터를 검사합니다.
 7. 필요한 난이도의 recovery 수집 셀을 실행합니다.
 8. 바로 다음 학습 셀을 실행합니다. loss, 처리 속도, ETA, validation loss와 checkpoint 저장이 셀 출력에 표시됩니다.
-9. 하나 이상의 난이도 학습이 checkpoint를 만들면 integrated candidate 셀부터 실행할 수 있습니다.
-10. official smoke가 성공한 뒤 official default 평가와 ZIP 생성을 실행합니다.
+9. 하나 이상의 난이도 학습이 latest.pt를 만들면 integrated candidate 셀부터 실행할 수 있습니다.
+10. official smoke와 official default 평가로 simulator 성능을 확인합니다.
+11. 더 안정적인 공개 seed 추정이 필요하면 선택 사항인 100-episode 셀을 실행합니다.
+12. 마지막 셀에서 ZIP을 생성합니다.
 
+## Loss와 실제 성능
+
+학습 중 출력되는 loss는 다음 항을 합친 최적화 신호입니다.
+
+- action imitation loss
+- stage classification loss
+- gate classification loss
+- latent KL loss
+
+이 값은 학습이 발산하는지 확인하는 데 사용하며 Kaggle 성능으로 해석하지 않습니다. 기본 candidate는 loss가 가장 낮은 `best_val.pt` 대신 현재 학습 상태인 `latest.pt`를 사용합니다.
+
+실제 성능은 공식 `eval.py`가 simulator rollout 후 계산합니다.
+
+```text
+SORT ACCURACY = 올바른 bin에 들어간 parcel 수 / 전체 parcel 수
+```
+
+함께 출력되는 `mean_sorted`, `all_placed_rate`, `mis_sort_rate`도 공식 evaluator의 진단값입니다. official default는 4 episode라 분산이 큽니다. 선택 사항인 100-episode 셀도 같은 공식 `eval.py`와 같은 계산식을 사용하며, 공개 seed에서의 더 안정적인 추정치일 뿐 held-out Kaggle 점수는 아닙니다.
 ## 단일 inference 정책
 
 ```text
@@ -73,7 +93,7 @@ State observation
 ## 결과 위치
 
 - 현재 학습: `/content/moveboxes_runs/moveboxes_stage_chunk_deadline_v1`
-- checkpoint: `<run>/<level>/checkpoints/latest.pt`, `best_val.pt`
+- 기본 평가 checkpoint: `<run>/<level>/checkpoints/latest.pt` (`best_val.pt`는 loss 기반이라 자동 선택하지 않음)
 - 공식 평가 로그·영상: `<run>/<level>/integrated_official_eval`
 - candidate: `<run>/integrated_candidate.zip`
 - 원격 복구: GitHub Release `run-moveboxes_stage_chunk_deadline_v1`
