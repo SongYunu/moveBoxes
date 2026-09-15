@@ -12,20 +12,36 @@ import torch
 from build_stage_anchor_notebook import make_notebook
 from stage_anchor_continue import ANCHORS, DIMS, package
 from stage_model import StageACT
+from stage_success_rl import discounted_returns, sparse_success_delta
 
 
 class AnchorTests(unittest.TestCase):
-    def test_notebook_freezes_easy_and_keeps_training_independent(self):
+    def test_notebook_uses_sparse_success_rl_and_freezes_easy(self):
         notebook = make_notebook()
         source = '\n'.join(''.join(cell['source']) for cell in notebook['cells'])
         self.assertNotIn('drive.mount', source)
-        self.assertIn("train(anchor_exp, 'medium')", source)
-        self.assertIn("train(anchor_exp, 'hard')", source)
-        self.assertNotIn("train(anchor_exp, 'easy')", source)
-        self.assertIn("USE_TRAINED = {'medium':False, 'hard':False}", source)
+        self.assertIn("prepare_success_rl(anchor_exp, 'medium'", source)
+        self.assertIn("prepare_success_rl(anchor_exp, 'hard'", source)
+        self.assertNotIn("prepare_success_rl(anchor_exp, 'easy'", source)
+        self.assertIn("MEDIUM_RESULT['score'] > BASELINE_RESULTS['medium']['score']", source)
+        self.assertIn("HARD_RESULT['score'] > BASELINE_RESULTS['hard']['score']", source)
+        self.assertIn('imitation loss를 사용하지 않습니다', source)
         for cell in notebook['cells']:
             if cell['cell_type'] == 'code':
                 compile(''.join(cell['source']), cell['metadata'].get('id','cell'), 'exec')
+
+    def test_discounted_returns_uses_only_observed_sparse_rewards(self):
+        rewards = torch.tensor([[0.,0.],[1.,0.],[0.,2.]])
+        result = discounted_returns(rewards, .5)
+        torch.testing.assert_close(result, torch.tensor([[.5,.5],[1.,1.],[0.,2.]]))
+        torch.testing.assert_close(
+            sparse_success_delta(torch.tensor([2,1,0]), torch.tensor([1,1,2])),
+            torch.tensor([1.,0.,0.]))
+        rl_source = (ROOT/'ver2/stages/stage_success_rl.py').read_text(encoding='utf-8')
+        self.assertIn("env.unwrapped.evaluate()['success_count']", rl_source)
+        self.assertIn('obs, _, _, _, _ = env.step(action)', rl_source)
+        self.assertNotIn('action_loss(', rl_source)
+        self.assertNotIn('stage_loss(', rl_source)
 
     def test_package_uses_one_policy_and_three_difficulty_weights(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -53,6 +69,12 @@ class AnchorTests(unittest.TestCase):
             self.assertEqual(submission.count('policy: stage_policy:load_policy'), 1)
             for level in ANCHORS:
                 self.assertTrue((candidate/'checkpoints'/level/'model.pt').is_file())
+            override = root/'medium/rl.pt'
+            torch.save(torch.load(root/'medium/anchor.pt', weights_only=True), override)
+            selected = package(child, checkpoint_overrides={'medium':override}, folder_name='selected')
+            selected_manifest = json.loads((selected/'manifest.json').read_text())
+            self.assertEqual(selected_manifest['levels']['medium']['selection'], 'success_rl')
+            self.assertEqual(selected_manifest['levels']['easy']['selection'], 'anchor')
 
 
 if __name__ == '__main__':
