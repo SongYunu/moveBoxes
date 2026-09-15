@@ -54,6 +54,7 @@ class AnchorTests(unittest.TestCase):
         self.assertNotIn('action_loss(', rl_source)
         self.assertNotIn('stage_loss(', rl_source)
         self.assertIn("raise FloatingPointError('Non-finite PPO loss", rl_source)
+        self.assertIn("resume.get('rl_iteration', resume.get('iteration'))", rl_source)
 
     def test_package_uses_one_policy_and_three_difficulty_weights(self):
         with tempfile.TemporaryDirectory() as tmp:

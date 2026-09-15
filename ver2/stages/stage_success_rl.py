@@ -187,7 +187,9 @@ def train(job, stop_after=None):
         torch.set_rng_state(resume['torch_rng'])
         if device.type == 'cuda' and resume['cuda_rng'] is not None:
             torch.cuda.set_rng_state_all(resume['cuda_rng'])
-        start = resume['iteration']
+        start = resume.get('rl_iteration', resume.get('iteration'))
+        if type(start) is not int or start < 0:
+            raise ValueError('Saved RL checkpoint has no valid iteration counter')
         history = json.loads((folder/'rl_progress.json').read_text())['history']
     if start > target_iteration:
         if not boundary.is_file():
