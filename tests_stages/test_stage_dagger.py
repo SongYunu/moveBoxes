@@ -14,6 +14,7 @@ import sys
 sys.path[:0] = [str(ROOT/'ver2/stages'), str(ROOT/'ver2'), str(ROOT)]
 
 from marso_experiment import digest
+from build_stage_dagger_notebook import make_notebook
 from stage_dagger import FROZEN_MODULES, materialize_training_manifest
 from stage_dagger_collect import collect_episode, select_executed
 from stage_model import StageACT
@@ -31,6 +32,22 @@ def state():
 
 
 class DaggerTests(unittest.TestCase):
+    def test_colab_uses_official_eval_and_never_packages_teacher(self):
+        notebook = make_notebook()
+        source = '\n'.join(''.join(cell['source']) for cell in notebook['cells'])
+        self.assertNotIn('drive.mount', source)
+        self.assertIn('DAGGER_ROUNDS = 4', source)
+        self.assertIn('EPISODES_PER_ROUND = 24', source)
+        self.assertIn('TRAIN_ITERS_PER_ROUND = 2000', source)
+        self.assertIn("UPSTREAM/'eval.py'", source)
+        self.assertIn('MIN_EXTRA_SORTED = 2', source)
+        self.assertIn("manifest['levels'][LEVEL]['selection'] = 'supervised_dagger'", source)
+        self.assertNotIn('prepare_success_rl(', source)
+        self.assertNotIn('prepare_pick_residual_rl(', source)
+        for cell in notebook['cells']:
+            if cell['cell_type'] == 'code':
+                compile(''.join(cell['source']), cell['metadata'].get('id','cell'), 'exec')
+
     def test_action_mixing_and_failed_rollout_labels_are_retained(self):
         rng = np.random.default_rng(4)
         expert = np.asarray([1, .5, 0, -1], dtype=np.float32)
