@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from build_github_notebook import CONFIG, make_notebook
-from github_store import GitHubStore, safe_target, sha256
+from github_store import AssetUploadError, GitHubStore, safe_target, sha256
 from github_data import download_archive
 from marso_github import (GitHubExperiment, source_bundle, atomic_checkpoint_patch, final_checkpoint_patch,
                           quiet_training_patch, github_token)
@@ -155,6 +155,39 @@ class PersistenceTests(unittest.TestCase):
         self.store.sync(self.source, 'hard', refresh=False)
         self.store.restore(self.root/'replaced-restore')
         self.assertEqual((self.root/'replaced-restore/hard/checkpoints/model.pt').read_bytes(), b'new-model')
+
+    def test_unresolved_422_rotates_release_part_and_keeps_uploading(self):
+        path = self.put('medium/checkpoints/latest.pt', b'checkpoint')
+        store = GitHubStore('owner/repo', 'run-test', 'token')
+        store.release = {'id': 1}
+        store.part = 1
+        attempts = []
+
+        def upload_once(source, name):
+            attempts.append((store.part, name))
+            if store.part == 1:
+                raise AssetUploadError(422)
+            return {'name':name, 'size':Path(source).stat().st_size, 'url':name}
+
+        def load(create=True):
+            store.release = {'id': 1}
+            store.part = 1
+            store.assets = {}
+            store.write_asset_count = 0
+            return True
+
+        def next_part():
+            store.part = 2
+            store.release = {'id': 2}
+            store.write_asset_count = 0
+
+        with patch.object(store, '_upload_once', side_effect=upload_once), \
+             patch.object(store, 'load', side_effect=load), \
+             patch.object(store, '_next_part', side_effect=next_part), \
+             patch('github_store.time.sleep'):
+            uploaded = store.upload(path, 'immutable.pt')
+        self.assertEqual(uploaded['size'], path.stat().st_size)
+        self.assertEqual(attempts, [(1, 'immutable.pt'), (2, 'immutable.pt')])
 
 
 class WorkflowTests(unittest.TestCase):

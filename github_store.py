@@ -201,15 +201,20 @@ class GitHubStore:
         except AssetUploadError as error:
             if error.status != 422:
                 raise
-            self.load(create=False)
-            if name in self.assets:
-                if self.assets[name]['size'] != path.stat().st_size:
-                    raise RuntimeError('Existing immutable asset has an unexpected size') from None
-                return self.assets[name]
-            if self.write_asset_count >= 950:
-                self._next_part()
-                return self._upload_once(path,name)
-            raise
+            # GitHub can return 422 while a just-finished upload is still absent
+            # from the release asset listing. Refresh once after propagation; if
+            # it is still absent, continue in a new release part. The immutable
+            # content name makes either outcome safe to restore.
+            for delay in (0, 2):
+                if delay:
+                    time.sleep(delay)
+                self.load(create=False)
+                if name in self.assets:
+                    if self.assets[name]['size'] != path.stat().st_size:
+                        raise RuntimeError('Existing immutable asset has an unexpected size') from None
+                    return self.assets[name]
+            self._next_part()
+            return self._upload_once(path,name)
 
     def _upload_once(self, path, name):
         endpoint = f"/repos/{self.repository}/releases/{self.release['id']}/assets?name="+urllib.parse.quote(name)
