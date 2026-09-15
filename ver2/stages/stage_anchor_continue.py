@@ -294,14 +294,22 @@ def train_pick_residual_rl(child, level, until_iteration=None):
         child.run(command, cwd=child.repo, log=folder/'pick_residual_rl.log')
 
 
-def package(child, *, use_trained=None, checkpoint_overrides=None, folder_name='anchor_candidate'):
+def package(child, *, use_trained=None, checkpoint_overrides=None, policy_overrides=None,
+            folder_name='anchor_candidate'):
     """Package one implementation with independently selected per-level weights."""
     import torch
     selected = {'medium':False, 'hard':False}
     selected.update(use_trained or {})
     overrides = {key:Path(value) for key,value in (checkpoint_overrides or {}).items()}
-    if any(level not in ANCHORS for level in overrides):
-        raise ValueError('Unknown checkpoint override level')
+    policy_overrides = {key:dict(value) for key,value in (policy_overrides or {}).items()}
+    if any(level not in ANCHORS for level in set(overrides)|set(policy_overrides)):
+        raise ValueError('Unknown checkpoint or policy override level')
+    allowed_policy = {'temporal_decay','ensemble_window','gate_threshold','stage_threshold',
+                      'auto_reset_steps'}
+    for level, values in policy_overrides.items():
+        unknown = set(values)-allowed_policy
+        if unknown:
+            raise ValueError(f'{level}: unsupported policy overrides: {sorted(unknown)}')
     target = child.run_dir/folder_name
     target.mkdir(parents=True, exist_ok=True)
     for name in ('stage_policy.py','stage_model.py','stage_schema.py','act_v2_model.py'):
@@ -318,6 +326,11 @@ def package(child, *, use_trained=None, checkpoint_overrides=None, folder_name='
         config = dict(model_config=saved['model_config'], temporal_decay=.25, ensemble_window=4,
             gate_threshold=.65, stage_threshold=.6, act_horizon=1, num_inference_steps=1,
             auto_reset_steps=199)
+        config.update(policy_overrides.get(level, {}))
+        if config['temporal_decay'] < 0 or not 1 <= config['ensemble_window'] <= saved['model_config']['chunk_size']:
+            raise ValueError(f'{level}: invalid temporal ensemble override')
+        if not 0 < config['gate_threshold'] < 1 or not 0 < config['stage_threshold'] < 1:
+            raise ValueError(f'{level}: invalid confidence threshold override')
         out = target/'checkpoints'/level
         out.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, out/'model.pt')
@@ -325,6 +338,7 @@ def package(child, *, use_trained=None, checkpoint_overrides=None, folder_name='
         selection = ('pick_residual_group_rl' if level in overrides and
                      saved.get('format') == 'moveboxes-stage-pick-residual-v1' else
                      'success_rl' if level in overrides else
+                     'policy_tuned_anchor' if level in policy_overrides else
                      'trained' if source == trained else 'anchor')
         manifest['levels'][level] = dict(source=str(source), checkpoint_sha256=digest(source),
             selection=selection, step=saved.get('step'), rl_iteration=saved.get('rl_iteration'),

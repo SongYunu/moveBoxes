@@ -110,6 +110,18 @@ class AnchorTests(unittest.TestCase):
             selected_manifest = json.loads((selected/'manifest.json').read_text())
             self.assertEqual(selected_manifest['levels']['medium']['selection'], 'success_rl')
             self.assertEqual(selected_manifest['levels']['easy']['selection'], 'anchor')
+            tuned = package(child, policy_overrides={'medium':{
+                'ensemble_window':2, 'temporal_decay':.75}}, folder_name='policy_tuned')
+            tuned_manifest = json.loads((tuned/'manifest.json').read_text())
+            medium = tuned_manifest['levels']['medium']
+            self.assertEqual(medium['selection'], 'policy_tuned_anchor')
+            self.assertEqual(medium['checkpoint_sha256'],
+                             manifest['levels']['medium']['checkpoint_sha256'])
+            self.assertEqual(medium['policy_config']['ensemble_window'], 2)
+            self.assertEqual(medium['policy_config']['temporal_decay'], .75)
+            with self.assertRaises(ValueError):
+                package(child, policy_overrides={'medium':{'model_config':{}}},
+                        folder_name='bad_policy')
 
     def test_pick_residual_is_zero_initialized_and_group_credit_is_local(self):
         cfg = dict(state_dim=54, history=2, chunk_size=4, width=32,
