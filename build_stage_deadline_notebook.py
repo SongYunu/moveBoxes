@@ -184,7 +184,8 @@ def show_official_video(label, level=None):
         raise FileNotFoundError(f'{folder}에 MP4가 없습니다. 바로 앞 평가 셀을 먼저 실행하세요.')
     video = videos[-1]
     print(f'[{level}/{label}] {video.name} · {video.stat().st_size/1024**2:.1f} MiB')
-    display(Video(filename=str(video), embed=True, width=VIDEO_WIDTH))
+    # Older Colab IPython checks os.path.exists(data) before filename.
+    display(Video(str(video), embed=True, width=VIDEO_WIDTH))
     if DOWNLOAD_VIDEO:
         from google.colab import files
         files.download(str(video))
@@ -220,12 +221,22 @@ def run_official(level, eval_config, label):
         process = subprocess.Popen(command, cwd=UPSTREAM, env=child_env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, errors='replace', bufsize=1)
-        for line in process.stdout:
-            print(line, end='')
-            handle.write(line)
-            handle.flush()
-        code = process.wait()
-        process.stdout.close()
+        try:
+            for line in process.stdout:
+                handle.write(line)
+                handle.flush()
+                print(line, end='', flush=True)
+            code = process.wait()
+        finally:
+            # Colab's stop button interrupts the kernel, not its GPU subprocess.
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            process.stdout.close()
     if code:
         raise RuntimeError(f'official eval failed ({level}); {log} 확인')
     return log
@@ -283,6 +294,19 @@ if BACKUP_EVAL_RESULTS:
             print('로컬 평가 로그/MP4는 유지됩니다. 영상 재생과 다운로드는 계속 가능합니다.')
 ''', 'optional-eval-backup')
 
+    add('code', '''# 현재 run 전체 PC 백업 · 중단 복구용 optimizer/RNG/recovery 데이터 포함
+# 학습/수집이 끝나거나 중단되어 파일 기록이 멈춘 상태에서 실행합니다.
+from google.colab import files
+checkpoints = list(RUN_DIR.glob('*/checkpoints/latest.pt'))
+if not checkpoints:
+    raise FileNotFoundError(f'{RUN_DIR}에 latest.pt가 없습니다.')
+backup = shutil.make_archive(str(RUN_DIR.parent/(RUN_DIR.name+'_backup')), 'zip',
+                             root_dir=RUN_DIR.parent, base_dir=RUN_DIR.name)
+print('복구용 checkpoint:', [str(path) for path in checkpoints])
+print('전체 run 백업 ZIP:', backup)
+files.download(backup)
+''', 'run-backup-download')
+
     add('code', '''# 단일 candidate ZIP 생성 및 브라우저 다운로드
 check = """import json,sys,torch\nfrom pathlib import Path\nfrom types import SimpleNamespace\nfrom stage_chunk_policy import load_policy\nroot=Path(sys.argv[1])\nmanifest=json.loads((root/'manifest.json').read_text())\nfor level,row in manifest['levels'].items():\n p=root/'checkpoints'/level/'model.pt'\n agent=load_policy(p,torch.zeros(1,row['model_config']['state_dim']),SimpleNamespace(shape=(4,)),'cpu')\n a=agent.act(torch.zeros(1,row['model_config']['state_dim']))\n assert a.shape==(1,4) and torch.isfinite(a).all() and a.abs().max()<=1\n agent.reset()\n print(level,'candidate import/action/reset OK')\n"""
 subprocess.run([sys.executable, '-c', check, str(CANDIDATE)], cwd=CANDIDATE, check=True)
@@ -297,6 +321,101 @@ files.download(archive)
     return base
 
 
+def make_runtime_repair_notebook():
+    """Append-only cells for the already trained, attached Colab session."""
+    notebook = make_notebook()
+    original = {c['metadata'].get('id'): ''.join(c['source']) for c in notebook['cells']}
+    cells = []
+
+    def add(kind, source, ident):
+        cell = dict(cell_type=kind, metadata={'id': ident}, source=source.splitlines(keepends=True))
+        if kind == 'code':
+            cell.update(execution_count=None, outputs=[])
+        cells.append(cell)
+
+    add('markdown', '''# 실행 중인 Colab의 평가·영상 셀 복구
+
+현재 열려 있는 학습 노트북 **아래에 코드 셀을 순서대로 복사**하세요. 이 파일을 별도 런타임에서 실행하면 기존 변수와 파일이 없습니다. 학습/수집을 중지한 상태에서 사용합니다.
+
+기존 candidate의 model.pt와 policy_config.json을 그대로 사용합니다. 학습, GitHub 복원/업로드, candidate 재생성은 실행하지 않습니다. 첫 셀은 같은 run에서 중단 후 남은 공식 eval.py 프로세스만 종료합니다.
+''', 'runtime-repair-guide')
+    add('code', '''# 1 · 기존 run/candidate 연결 + 중단 후 남은 평가 프로세스 정리
+import json, os, signal, subprocess, sys, time
+from pathlib import Path
+
+if 'experiment' not in globals() or 'CFG' not in globals():
+    raise RuntimeError('학습한 노트북의 같은 런타임 아래에 이 셀을 추가하세요.')
+RUN_DIR = Path(experiment.run_dir)
+CANDIDATE = RUN_DIR/'integrated_candidate'
+UPSTREAM = Path(CFG['repo_dir'])
+manifest = json.loads((CANDIDATE/'manifest.json').read_text(encoding='utf-8'))
+selected = {level:CANDIDATE/'checkpoints'/level/'model.pt'
+            for level in manifest['levels']}
+if not selected or any(not path.is_file() for path in selected.values()):
+    raise FileNotFoundError(f'{CANDIDATE}의 기존 candidate checkpoint를 확인하세요.')
+MAX_STEPS = 200
+SMOKE_SEED = 61000
+
+def stop_leftover_official_eval():
+    # Linux /proc: match the exact evaluator and this run's output directory.
+    # Training/collection commands and other runs cannot match these conditions.
+    proc = Path('/proc')
+    if not proc.is_dir():
+        return
+    for entry in proc.iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            command_bytes = (entry/'cmdline').read_bytes()
+            args = command_bytes.decode(errors='replace').split('\\0')
+            evaluator = str((UPSTREAM/'eval.py').resolve())
+            outputs = [a.split('=',1)[1] for a in args if a.startswith('hydra.run.dir=')]
+            if evaluator not in args or not outputs:
+                continue
+            if not all(Path(output).resolve().is_relative_to(RUN_DIR.resolve()) for output in outputs):
+                continue
+            pid = int(entry.name)
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.monotonic()+5
+            while entry.exists() and time.monotonic() < deadline:
+                # Zombies have already released GPU resources; the parent reaps them.
+                if (entry/'stat').read_text().split(') ',1)[1].startswith('Z'):
+                    break
+                time.sleep(.1)
+            else:
+                if entry.exists() and (entry/'cmdline').read_bytes() == command_bytes:
+                    os.kill(pid, signal.SIGKILL)
+            print('중단 후 남은 이 run의 공식 평가 프로세스 종료:', pid)
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+
+stop_leftover_official_eval()
+print('학습 파일 유지:', RUN_DIR)
+print('기존 candidate 그대로 사용:', list(selected))
+''', 'runtime-repair-setup')
+    add('code', original['video-player']+"\nshow_all_official_videos('smoke')\n",
+        'runtime-repair-show-existing')
+    helper = original['official-smoke'].rsplit('\nfor level in selected:', 1)[0]
+    add('code', helper+'''
+
+def run_missing_smoke():
+    for level in selected:
+        folder = RUN_DIR/level/'integrated_official_eval/smoke/videos'
+        if any(path.stat().st_size > 0 for path in folder.rglob('*.mp4')):
+            print(level, '기존 smoke 영상 유지')
+            continue
+        run_official(level, SMOKE_CONFIG, 'smoke')
+    show_all_official_videos('smoke')
+
+# 영상이 없는 난이도만 공식 평가합니다. GitHub 업로드를 호출하지 않습니다.
+run_missing_smoke()
+''', 'runtime-repair-render-missing')
+    add('code', "import shutil\n"+original['run-backup-download'], 'runtime-repair-pc-backup')
+    notebook['cells'] = cells
+    notebook['metadata']['colab']['name'] = 'moveboxes_stage_runtime_repair.ipynb'
+    return notebook
+
+
 if __name__ == '__main__':
     notebook = make_notebook()
     for cell in notebook['cells']:
@@ -304,4 +423,20 @@ if __name__ == '__main__':
             compile(''.join(cell['source']), cell.get('id', cell['metadata'].get('id','cell')), 'exec')
     path = Path(__file__).parent/'notebooks/moveboxes_stage_deadline_colab.ipynb'
     path.write_text(json.dumps(notebook, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+    print(path)
+    repair = make_runtime_repair_notebook()
+    for cell in repair['cells']:
+        if cell['cell_type'] == 'code':
+            compile(''.join(cell['source']), cell['metadata']['id'], 'exec')
+    path = path.with_name('moveboxes_stage_runtime_repair.ipynb')
+    path.write_text(json.dumps(repair, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+    print(path)
+    repair_code = '\n\n'.join(''.join(cell['source']) for cell in repair['cells']
+                            if cell['cell_type'] == 'code' and cell['metadata']['id'] != 'runtime-repair-pc-backup')
+    # The importable patch displays existing videos and defines the rerender helper.
+    # Running a new simulator evaluation remains an explicit next cell.
+    repair_code = repair_code.rsplit('\nrun_missing_smoke()', 1)[0]+'\n'
+    compile(repair_code, 'moveboxes_stage_runtime_repair.py', 'exec')
+    path = path.with_suffix('.py')
+    path.write_text(repair_code, encoding='utf-8')
     print(path)

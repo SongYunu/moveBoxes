@@ -112,6 +112,20 @@ show_all_official_videos('public_100ep')
 
 한 난이도만 다시 보려면 `show_official_video('smoke', 'hard')`처럼 호출합니다. 평가 실행은 GitHub 업로드를 호출하지 않습니다. 로그와 MP4의 GitHub 백업은 별도 선택 셀의 `BACKUP_EVAL_RESULTS=True`로 실행하며, 업로드 실패가 영상 재생이나 다음 난이도 평가를 중단하지 않습니다. 학습 checkpoint 자동 백업은 기존대로 유지됩니다.
 
+Colab의 구형 IPython에도 맞도록 `Video(str(video), embed=True)`처럼 경로를 첫 인자로 전달합니다. `filename=`만 전달하면 일부 버전에서 `os.path.exists(None)` 오류가 납니다. 평가 셀을 중지하면 하위 evaluator를 종료하고 로그 파일을 닫습니다.
+
+## 이미 학습한 런타임에서 오류를 복구하기
+
+[`moveboxes_stage_runtime_repair.ipynb`](../../notebooks/moveboxes_stage_runtime_repair.ipynb)의 코드 셀을 현재 학습 노트북 아래에 순서대로 복사합니다. 또는 같은 디렉터리의 `moveboxes_stage_runtime_repair.py`를 같은 kernel의 globals에서 실행합니다.
+
+- 같은 run의 중단 후 남은 공식 평가 프로세스만 정리합니다.
+- 기존 candidate의 checkpoint와 policy sidecar를 수정하지 않습니다.
+- 이미 저장된 smoke 영상을 먼저 재생합니다.
+- `run_missing_smoke()`는 영상이 없는 난이도만 공식 평가하며 업로드를 호출하지 않습니다.
+- 마지막 선택 셀은 optimizer/RNG와 recovery 데이터를 포함한 현재 run 전체를 PC ZIP으로 내려받습니다.
+
+새 런타임에서는 원래 학습 노트북의 01~05로 같은 run을 GitHub에서 복구해야 합니다. `/content`에만 있는 파일은 런타임 삭제 시 사라집니다. GitHub의 마지막 완료 snapshot 또는 다운로드한 전체 run ZIP이 복구 근거입니다. 영상 재생 오류와 업로드 오류를 수정해도 이미 기록된 SORT ACCURACY 점수는 바뀌지 않습니다.
+
 100-episode 평가는 점수 계산 후 별도의 짧은 video rollout을 저장하므로 100 episode 전체를 영상으로 만드는 것은 아닙니다. 영상은 현재 integrated Stage ACT policy가 실제 simulator에서 실행한 결과입니다.
 ## 결과 위치
 

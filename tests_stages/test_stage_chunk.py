@@ -5,6 +5,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT/'ver2/stages'), str(ROOT/'ver2'), str(ROOT)]
@@ -15,6 +16,7 @@ from stage_model import StageACT
 from stage_schema import PICK, CARRY, PLACE, COMPLETE, RECOVER
 from build_stage_deadline_notebook import make_notebook as make_deadline_notebook
 from build_stage_deadline_notebook import CONFIG as DEADLINE_CONFIG
+from build_stage_deadline_notebook import make_runtime_repair_notebook
 from stage_experiment import StageExperiment
 
 
@@ -266,6 +268,102 @@ class ChunkTests(unittest.TestCase):
                 self.assertTrue((root/level/'integrated_official_eval/smoke/videos/rollout.mp4').is_file())
             backup = ''.join(cells['optional-eval-backup']['source'])
             exec(backup.replace('BACKUP_EVAL_RESULTS = False','BACKUP_EVAL_RESULTS = True'), namespace)
+
+    def test_video_player_supports_old_colab_constructor(self):
+        cells = {c['metadata'].get('id'): c for c in make_deadline_notebook()['cells']}
+        displayed = []
+
+        def legacy_video(data=None, **kwargs):
+            # Reproduce Colab's os.path.exists(data) before handling filename.
+            self.assertTrue(Path(data).exists())
+            self.assertNotIn('filename', kwargs)
+            self.assertTrue(kwargs['embed'])
+            return data
+
+        display_module = SimpleNamespace(Video=legacy_video, display=displayed.append)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for level in ('easy', 'medium', 'hard'):
+                folder = root/level/'integrated_official_eval/smoke/videos'
+                folder.mkdir(parents=True)
+                (folder/'rollout.mp4').write_bytes(b'video')
+            namespace = dict(RUN_DIR=root, selected=dict.fromkeys(('easy','medium','hard')))
+            with mock.patch.dict(sys.modules, {'IPython.display':display_module}):
+                exec(''.join(cells['video-player']['source']), namespace)
+                namespace['show_all_official_videos']('smoke')
+            self.assertEqual(len(displayed), 3)
+
+    def test_stop_button_terminates_real_eval_subprocess(self):
+        import subprocess
+        cells = {c['metadata'].get('id'): c for c in make_deadline_notebook()['cells']}
+        processes = []
+        real_popen = subprocess.Popen
+
+        def tracked_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        def stop_button(*args, **kwargs):
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            official = root/'official'
+            official.mkdir()
+            (official/'eval.py').write_text(
+                "import time\nprint('running evaluation', flush=True)\ntime.sleep(60)\n",
+                encoding='utf-8')
+            namespace = dict(RUN_DIR=root, CFG={'repo_dir':str(official)},
+                CANDIDATE=root/'candidate', selected={'easy':None},
+                MAX_STEPS=200, SMOKE_SEED=61000, Path=Path, print=stop_button)
+            with mock.patch('subprocess.Popen', side_effect=tracked_popen):
+                with self.assertRaises(KeyboardInterrupt):
+                    exec(''.join(cells['official-smoke']['source']), namespace)
+            self.assertEqual(len(processes), 1)
+            self.assertIsNotNone(processes[0].poll())
+            self.assertTrue(processes[0].stdout.closed)
+            log = root/'easy/integrated_official_eval/smoke/official_eval.log'
+            self.assertIn('running evaluation', log.read_text())
+
+    def test_active_runtime_repair_preserves_candidate_and_renders_missing_only(self):
+        notebook = make_runtime_repair_notebook()
+        cells = {c['metadata']['id']: c for c in notebook['cells']}
+        for cell in notebook['cells']:
+            if cell['cell_type'] == 'code':
+                compile(''.join(cell['source']), cell['metadata']['id'], 'exec')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            official = root/'official'
+            official.mkdir()
+            (official/'eval.py').write_text(
+                "import sys\nfrom pathlib import Path\n"
+                "output=Path(next(a.split('=',1)[1] for a in sys.argv if a.startswith('hydra.run.dir=')))\n"
+                "(output/'videos').mkdir(parents=True,exist_ok=True)\n"
+                "(output/'videos'/'rollout.mp4').write_bytes(b'new-video')\n"
+                "print('official evaluator completed')\n", encoding='utf-8')
+            candidate = root/'integrated_candidate'
+            preserved = {}
+            for level in ('easy','medium','hard'):
+                folder = candidate/'checkpoints'/level
+                folder.mkdir(parents=True)
+                for name in ('model.pt','policy_config.json'):
+                    path = folder/name
+                    path.write_bytes(b'existing-'+level.encode())
+                    preserved[path] = path.read_bytes()
+            (candidate/'manifest.json').write_text(json.dumps(dict(levels=dict.fromkeys(('easy','medium','hard')))))
+            existing = root/'easy/integrated_official_eval/smoke/videos/rollout.mp4'
+            existing.parent.mkdir(parents=True)
+            existing.write_bytes(b'old-video')
+            namespace = dict(experiment=SimpleNamespace(run_dir=root), CFG={'repo_dir':str(official)},
+                             show_all_official_videos=lambda label:None)
+            exec(''.join(cells['runtime-repair-setup']['source']), namespace)
+            exec(''.join(cells['runtime-repair-render-missing']['source']), namespace)
+            self.assertEqual(existing.read_bytes(), b'old-video')
+            for level in ('medium','hard'):
+                self.assertTrue((root/level/'integrated_official_eval/smoke/videos/rollout.mp4').is_file())
+            for path, content in preserved.items():
+                self.assertEqual(path.read_bytes(), content)
 
 
 if __name__ == '__main__':
