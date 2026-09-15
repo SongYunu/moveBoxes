@@ -165,6 +165,30 @@ for level in selected:
         env.close()
 ''', 'integrated-sanity')
 
+    add('code', '''# Colab inline 영상 player · 한 번만 실행
+from IPython.display import Video, display
+
+VIDEO_LEVEL = next(iter(selected))  # 'easy', 'medium', 'hard' 중 현재 생성된 난이도
+VIDEO_WIDTH = 960
+DOWNLOAD_VIDEO = False
+
+def show_official_video(label, level=None):
+    level = level or VIDEO_LEVEL
+    if level not in selected:
+        raise ValueError(f'{level} checkpoint가 없습니다. 가능한 난이도: {list(selected)}')
+    folder = RUN_DIR/level/'integrated_official_eval'/label/'videos'
+    videos = sorted(folder.rglob('*.mp4'), key=lambda path:path.stat().st_mtime)
+    if not videos:
+        raise FileNotFoundError(f'{folder}에 MP4가 없습니다. 바로 앞 평가 셀을 먼저 실행하세요.')
+    video = videos[-1]
+    print(f'[{level}/{label}] {video.name} · {video.stat().st_size/1024**2:.1f} MiB')
+    display(Video(filename=str(video), embed=True, width=VIDEO_WIDTH))
+    if DOWNLOAD_VIDEO:
+        from google.colab import files
+        files.download(str(video))
+    return video
+''', 'video-player')
+
     add('code', '''# 공식 eval.py · 1 episode smoke
 RESULTS = RUN_DIR
 SMOKE_CONFIG = RUN_DIR/'integrated_smoke_eval.yaml'
@@ -200,6 +224,10 @@ for level in selected:
     run_official(level, SMOKE_CONFIG, 'smoke')
 ''', 'official-smoke')
 
+    add('code', '''# 방금 생성된 1-episode smoke 영상 바로 보기
+show_official_video('smoke')
+''', 'video-smoke')
+
     add('code', '''# 공식 conf/eval/default.yaml 평가 · 자체 metric/승자 선택 없음
 OFFICIAL_EVAL_CONFIG = UPSTREAM/'conf/eval/default.yaml'
 if not OFFICIAL_EVAL_CONFIG.is_file():
@@ -208,6 +236,10 @@ for level in selected:
     run_official(level, OFFICIAL_EVAL_CONFIG, 'default')
 print('공식 raw logs/videos:', {level:str(RUN_DIR/level/'integrated_official_eval'/'default') for level in selected})
 ''', 'official-default')
+
+    add('code', '''# 방금 생성된 official default 영상 바로 보기
+show_official_video('default')
+''', 'video-default')
 
     add('code', '''# 선택 사항 · 공식 eval.py로 100-episode 공개 seed 성능 추정
 # 계산식은 공식 evaluator 그대로이며 held-out Kaggle 점수는 아닙니다.
@@ -223,6 +255,11 @@ print('100-episode 공식 evaluator raw logs:',
       {level:str(RUN_DIR/level/'integrated_official_eval'/'public_100ep'/'official_eval.log')
        for level in selected})
 ''', 'official-public-benchmark')
+
+    add('code', '''# 선택 실행한 100-episode 평가 영상 보기
+show_official_video('public_100ep')
+''', 'video-public-benchmark')
+
     add('code', '''# 단일 candidate ZIP 생성 및 브라우저 다운로드
 check = """import json,sys,torch\nfrom pathlib import Path\nfrom types import SimpleNamespace\nfrom stage_chunk_policy import load_policy\nroot=Path(sys.argv[1])\nmanifest=json.loads((root/'manifest.json').read_text())\nfor level,row in manifest['levels'].items():\n p=root/'checkpoints'/level/'model.pt'\n agent=load_policy(p,torch.zeros(1,row['model_config']['state_dim']),SimpleNamespace(shape=(4,)),'cpu')\n a=agent.act(torch.zeros(1,row['model_config']['state_dim']))\n assert a.shape==(1,4) and torch.isfinite(a).all() and a.abs().max()<=1\n agent.reset()\n print(level,'candidate import/action/reset OK')\n"""
 subprocess.run([sys.executable, '-c', check, str(CANDIDATE)], cwd=CANDIDATE, check=True)

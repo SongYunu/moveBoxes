@@ -47,9 +47,11 @@ Fine-grained token은 `SongYunu/moveBoxes` 저장소의 **Contents: Read and wri
 7. 필요한 난이도의 recovery 수집 셀을 실행합니다.
 8. 바로 다음 학습 셀을 실행합니다. loss, 처리 속도, ETA, validation loss와 checkpoint 저장이 셀 출력에 표시됩니다.
 9. 하나 이상의 난이도 학습이 latest.pt를 만들면 integrated candidate 셀부터 실행할 수 있습니다.
-10. official smoke와 official default 평가로 simulator 성능을 확인합니다.
-11. 더 안정적인 공개 seed 추정이 필요하면 선택 사항인 100-episode 셀을 실행합니다.
-12. 마지막 셀에서 ZIP을 생성합니다.
+10. video player 셀에서 재생할 난이도와 화면 폭을 지정합니다.
+11. official smoke 실행 직후 영상 보기 셀에서 1-episode rollout을 확인합니다.
+12. official default 실행 직후 해당 영상을 확인합니다.
+13. 필요하면 100-episode 공개 seed 평가와 영상 보기 셀을 실행합니다.
+14. 마지막 셀에서 ZIP을 생성합니다.
 
 ## Loss와 실제 성능
 
@@ -90,6 +92,25 @@ State observation
 
 `pick`과 `place` 시연에는 OPEN/CLOSE가 모두 있으므로 stage 이름으로 gripper를 강제하지 않습니다. gripper FSM은 모델이 학습한 logit만 안정화합니다.
 
+## Colab에서 영상 보기
+
+공식 `eval.py`는 각 실행마다 render와 scene sensor view가 포함된 MP4를 생성합니다. 노트북의 video player 셀에서 다음 값을 정합니다.
+
+```python
+VIDEO_LEVEL = 'easy'     # easy, medium, hard
+VIDEO_WIDTH = 960
+DOWNLOAD_VIDEO = False   # True면 재생한 MP4도 다운로드
+```
+
+각 평가 바로 뒤의 영상 셀은 가장 최근 MP4 하나를 찾아 Colab 출력에 inline player로 표시합니다.
+
+```python
+show_official_video('smoke')
+show_official_video('default')
+show_official_video('public_100ep')
+```
+
+100-episode 평가는 점수 계산 후 별도의 짧은 video rollout을 저장하므로 100 episode 전체를 영상으로 만드는 것은 아닙니다. 영상은 현재 integrated Stage ACT policy가 실제 simulator에서 실행한 결과입니다.
 ## 결과 위치
 
 - 현재 학습: `/content/moveboxes_runs/moveboxes_stage_chunk_deadline_v1`
