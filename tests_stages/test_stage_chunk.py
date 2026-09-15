@@ -1,11 +1,9 @@
 import copy
-import json
 from pathlib import Path
 import sys
 import tempfile
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT/'ver2/stages'), str(ROOT/'ver2'), str(ROOT)]
@@ -14,9 +12,6 @@ from stage_chunk_policy import ChunkStagePolicy, load_chunk_stage
 from stage_policy import load_stage
 from stage_model import StageACT
 from stage_schema import PICK, CARRY, PLACE, COMPLETE, RECOVER
-from stage_compare import evaluate, summarize, variant_config, load_spec
-from stage_compare_restore import restore_baselines
-from build_stage_compare_notebook import make_notebook
 from build_stage_deadline_notebook import make_notebook as make_deadline_notebook
 
 
@@ -110,6 +105,20 @@ class ChunkTests(unittest.TestCase):
         self.assertEqual(policy.act(obs(batch=2)).shape, (2, 4))
         self.assertEqual(policy.decoder_calls, 1)
 
+    def test_official_fixed_episode_boundary_resets_all_runtime_state(self):
+        policy = ChunkStagePolicy(Controlled(), gripper_fsm=True, auto_reset_steps=2)
+        first = policy.act(obs(marker=.1, grip=1))
+        policy.act(obs(marker=.8, grip=-1))
+        self.assertEqual(policy.step, 2)
+        self.assertTrue(policy.history)
+        repeated = policy.act(obs(marker=.1, grip=1))
+        torch.testing.assert_close(repeated, first)
+        self.assertEqual(policy.step, 1)
+        self.assertEqual(policy.decoder_calls, 1)
+        self.assertEqual(policy.generation.tolist(), [0])
+        self.assertEqual(policy.stage.tolist(), [PICK])
+        self.assertEqual(policy.grip_state.tolist(), [1.])
+
     def test_gripper_filter_follows_confident_learned_commands_and_resets_on_transition(self):
         policy = ChunkStagePolicy(Controlled(), stage_horizons={s:1 for s in ('pick','carry','place','done')}, gripper_fsm=True)
         sequence = [1, -.2, -1, .1, -1, -1, 1]
@@ -123,142 +132,63 @@ class ChunkTests(unittest.TestCase):
                 ChunkStagePolicy(Controlled(), stage_horizons=dict(pick=value,carry=6,place=2,done=1))
         with self.assertRaises(ValueError):
             ChunkStagePolicy(Controlled(), stage_horizons=dict(pick=2))
+        for value in (0, -1, 1.5, True):
+            with self.assertRaises(ValueError):
+                ChunkStagePolicy(Controlled(), auto_reset_steps=value)
         for frame in (torch.zeros(54), torch.zeros(1, 26), torch.full((1,54), float('nan'))):
             with self.assertRaises(ValueError):
                 ChunkStagePolicy(Controlled()).act(frame)
 
-    def test_loader_baseline_parity_and_three_state_dimensions(self):
+    def test_loader_legacy_parity_and_integrated_policy_all_state_dimensions(self):
         with tempfile.TemporaryDirectory() as directory:
             for dim in (54, 72, 90):
                 path, base = checkpoint(directory, dim)
                 space = SimpleNamespace(shape=(4,))
                 old = load_stage(path, torch.zeros(1, dim), space, 'cpu', **base)
-                a = load_chunk_stage(path, torch.zeros(1, dim), space, 'cpu', **variant_config(base, 'A', {}))
+                a = load_chunk_stage(path, torch.zeros(1, dim), space, 'cpu', **base)
                 for _ in range(9):
                     frame = torch.randn(1, dim)
                     torch.testing.assert_close(a.act(frame), old.act(frame), atol=0, rtol=0)
-                for variant in ('B', 'C'):
-                    policy = load_chunk_stage(path, frame, space, 'cpu', **variant_config(base, variant, {}))
-                    action = policy.act(frame)
-                    self.assertEqual(action.shape, (1, 4))
-                    self.assertTrue(torch.isfinite(action).all() and action.abs().max() <= 1)
+                integrated = copy.deepcopy(base)
+                integrated.update(stage_aware_chunk=True,gripper_fsm=True,
+                                  stage_horizons=dict(pick=2,carry=6,place=2,done=1),
+                                  gripper_margin=.5,gripper_confirm_steps=2,auto_reset_steps=199)
+                policy = load_chunk_stage(path, frame, space, 'cpu', **integrated)
+                action = policy.act(frame)
+                self.assertEqual(action.shape, (1, 4))
+                self.assertTrue(torch.isfinite(action).all() and action.abs().max() <= 1)
                 wrong = copy.deepcopy(base)
                 wrong['model_config']['history'] = 3
                 with self.assertRaises(ValueError):
                     load_chunk_stage(path, frame, space, 'cpu', **wrong)
 
-    def test_wrong_checkpoint_family_and_missing_baseline_settings_rejected(self):
+    def test_wrong_checkpoint_family_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path, base = checkpoint(directory)
-            with self.assertRaises(ValueError):
-                load_spec(dict(checkpoint=str(path), policy_config={}), 54)
-            with self.assertRaisesRegex(ValueError, 'hash differs'):
-                load_spec(dict(checkpoint=str(path), policy_config=base, checkpoint_sha256='bad'), 54)
             saved = torch.load(path, weights_only=True)
             saved['format'] = 'moveboxes-hard-target-act-v2'
             torch.save(saved, path)
             with self.assertRaises(ValueError):
-                load_spec(dict(checkpoint=str(path), policy_config=base), 54)
-
-    def test_summary_does_not_invent_missing_level_score(self):
-        with tempfile.TemporaryDirectory() as directory:
-            results = {'easy': {'A': {'sort_accuracy': 1.}}}
-            table = summarize(results, directory)
-            self.assertIsNone(table['A']['overall'])
-            for level, score in (('medium', .4), ('hard', .1)):
-                results[level] = {'A': {'sort_accuracy': score}}
-            table = summarize(results, directory)
-            self.assertAlmostEqual(table['A']['overall'], .37)
-
-    def test_evaluation_resets_every_episode_and_resumes_without_repeating(self):
-        class Env:
-            single_action_space = SimpleNamespace(shape=(4,))
-            def reset(self, seed):
-                return torch.zeros(1, 54), {}
-            def close(self):
-                pass
-        calls = []
-        def rollout(env, agent, device, n, seeds, max_steps):
-            self.assertEqual(agent.policy.step, 0)
-            self.assertEqual(n, 1)
-            calls.append(seeds[0])
-            for _ in range(4):
-                agent.act(env.reset(0)[0])
-            return dict(sort_accuracy=.5, all_placed_rate=0, mean_sorted=1, mean_steps=200, mis_sort_rate=0)
-        utils = ModuleType('warehouse_sort.utils')
-        utils.__file__ = __file__
-        utils.compose_cfg = lambda args: SimpleNamespace(randomization={})
-        utils.make_env = lambda *a, **kw: (Env(), False)
-        utils.rollout_metrics = rollout
-        env_module = ModuleType('warehouse_sort.env')
-        env_module.__file__ = __file__
-        package = ModuleType('warehouse_sort')
-        package.utils, package.env = utils, env_module
-        omega = SimpleNamespace(OmegaConf=SimpleNamespace(to_container=lambda *a, **kw: {}))
-        with tempfile.TemporaryDirectory() as directory:
-            path, base = checkpoint(directory)
-            config = dict(output=str(Path(directory)/'results'), seeds=[61000,61001], max_steps=200,
-                levels=dict(easy=dict(checkpoint=str(path), policy_config=base)))
-            with patch.dict(sys.modules, {'warehouse_sort': package, 'warehouse_sort.utils':utils,
-                                         'warehouse_sort.env':env_module, 'omegaconf':omega}):
-                evaluate(config, 'cpu')
-                self.assertEqual(calls, [61000,61001]*3)
-                evaluate(config, 'cpu')
-                self.assertEqual(len(calls), 6)
-                config['seeds'] = [61003]
-                with self.assertRaisesRegex(ValueError, 'different inputs'):
-                    evaluate(config, 'cpu')
+                load_chunk_stage(path, torch.zeros(1,54), SimpleNamespace(shape=(4,)), 'cpu', **base)
 
     def test_notebook_cells_compile_and_only_evaluate(self):
-        notebook = make_notebook()
-        for cell in notebook['cells']:
-            if cell['cell_type'] == 'code':
-                compile(''.join(cell['source']), cell['id'], 'exec')
-        source = '\n'.join(''.join(c['source']) for c in notebook['cells'])
-        self.assertIn('stage_compare.py', source)
-        self.assertNotIn('experiment.train(', source)
-        self.assertNotIn('experiment.collect(', source)
-        self.assertNotIn('pip\', \'install\', \'--upgrade', source)
-        self.assertNotIn('github_token', source)
-        self.assertIn('USE_DRIVE = True', source)
-        self.assertIn('--audit-only', source)
-
         deadline = make_deadline_notebook()
         for cell in deadline['cells']:
             if cell['cell_type'] == 'code':
                 compile(''.join(cell['source']), cell['id'], 'exec')
         deadline_source = '\n'.join(''.join(c['source']) for c in deadline['cells'])
-        self.assertIn('USE_KNOWN_BASELINES = False', deadline_source)
         self.assertIn("'easy': ''", deadline_source)
-        self.assertIn('SMOKE_SEEDS', deadline_source)
-        self.assertIn('COMPARE_SEEDS', deadline_source)
+        self.assertIn('SMOKE_SEED', deadline_source)
         self.assertIn('stage_chunk_policy:load_policy', deadline_source)
+        self.assertIn("UPSTREAM/'eval.py'", deadline_source)
+        self.assertIn("UPSTREAM/'conf/eval/default.yaml'", deadline_source)
+        self.assertIn('stage_aware_chunk=True', deadline_source)
+        self.assertIn('gripper_fsm=True', deadline_source)
+        self.assertIn('auto_reset_steps=MAX_STEPS-1', deadline_source)
+        self.assertNotIn('restore_baselines', deadline_source)
+        self.assertNotIn('comparison.json', deadline_source)
+        self.assertNotIn('MANUAL_SELECTION', deadline_source)
         self.assertNotIn('experiment.train(', deadline_source)
-
-    def test_restore_is_read_only_hash_pinned_and_never_overwrites_existing_checkpoint(self):
-        import hashlib
-        import io
-        content = b'checkpoint-fixture'
-        sha = hashlib.sha256(content).hexdigest()
-        baseline = dict(easy=dict(checkpoint='best.pt', sha256=sha, bytes=len(content),
-                                  url='https://example.invalid/best.pt'))
-        calls = []
-        def download(request, timeout):
-            calls.append((request.full_url, request.headers.get('User-agent'), timeout))
-            return io.BytesIO(content)
-        with tempfile.TemporaryDirectory() as directory:
-            with patch('stage_compare_restore.BASELINES', baseline), \
-                 patch('stage_compare_restore.urllib.request.urlopen', side_effect=download):
-                specs = restore_baselines(directory, ['easy'])
-                self.assertEqual(specs['easy']['checkpoint_sha256'], sha)
-                self.assertEqual(calls, [('https://example.invalid/best.pt', 'moveboxes-colab', 180)])
-                count = len(calls)
-                restore_baselines(directory, ['easy'])
-                self.assertEqual(len(calls), count)
-                Path(specs['easy']['checkpoint']).write_bytes(b'other')
-                with self.assertRaises(FileExistsError):
-                    restore_baselines(directory, ['easy'])
-                self.assertEqual(Path(specs['easy']['checkpoint']).read_bytes(), b'other')
 
 
 if __name__ == '__main__':

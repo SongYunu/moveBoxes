@@ -2,7 +2,8 @@
 
 The supervisor still observes every environment step. Only the action decoder is
 cached. Gripper filtering follows learned logits, never geometry or a stage/open
-lookup table. Call reset() after every environment reset.
+lookup table. Explicit reset() is supported; auto_reset_steps handles the fixed
+episode boundary used by the official evaluator, which does not call reset().
 """
 import json
 from pathlib import Path
@@ -13,7 +14,8 @@ from stage_schema import PICK, HOLD, RECOVER, STAGES
 
 class ChunkStagePolicy(StagePolicy):
     def __init__(self, model, stage_horizons=None, gripper_fsm=False,
-                 gripper_margin=.5, gripper_confirm_steps=2, **kwargs):
+                 gripper_margin=.5, gripper_confirm_steps=2,
+                 auto_reset_steps=None, **kwargs):
         # Conservative starts: pick/place each contain multiple fine motor phases.
         horizons = dict(pick=2, carry=6, place=2, done=1)
         if stage_horizons is not None:
@@ -24,10 +26,16 @@ class ChunkStagePolicy(StagePolicy):
             raise ValueError('Each execution horizon must be within the trained chunk_size')
         if not 0 <= gripper_margin < float('inf') or type(gripper_confirm_steps) is not int or gripper_confirm_steps < 1:
             raise ValueError('Invalid gripper filter settings')
+        if auto_reset_steps is not None and (type(auto_reset_steps) is not int or auto_reset_steps < 1):
+            raise ValueError('auto_reset_steps must be a positive integer or None')
         self.stage_horizons = horizons
         self.gripper_fsm = bool(gripper_fsm)
         self.gripper_margin = gripper_margin
         self.gripper_confirm_steps = gripper_confirm_steps
+        # The official evaluator resets the environment between fixed-length
+        # batches without calling policy.reset(). Match that boundary here so
+        # history, stages, chunks and the gripper latch cannot cross episodes.
+        self.auto_reset_steps = auto_reset_steps
         super().__init__(model, **kwargs)
 
     def reset(self):
@@ -41,6 +49,8 @@ class ChunkStagePolicy(StagePolicy):
         state = (obs['state'] if isinstance(obs, dict) else obs).float().to(self.device)
         if state.ndim != 2 or state.shape[-1] != self.model.cfg['state_dim'] or not torch.isfinite(state).all():
             raise ValueError('Expected finite batched state matching the checkpoint')
+        if self.auto_reset_steps is not None and self.step >= self.auto_reset_steps:
+            self.reset()
         if self.batch != len(state):
             self.reset()
             self.batch = len(state)
@@ -108,7 +118,8 @@ def load_chunk_stage(checkpoint, sample_obs, action_space, device, **cfg):
             raise ValueError('gripper_fsm requires stage_aware_chunk')
         return baseline
     keys = ('gate_threshold', 'stage_threshold', 'temporal_decay', 'ensemble_window',
-            'stage_horizons', 'gripper_fsm', 'gripper_margin', 'gripper_confirm_steps')
+            'stage_horizons', 'gripper_fsm', 'gripper_margin', 'gripper_confirm_steps',
+            'auto_reset_steps')
     return ChunkStagePolicy(baseline.model, **{k: cfg[k] for k in keys if k in cfg})
 
 
