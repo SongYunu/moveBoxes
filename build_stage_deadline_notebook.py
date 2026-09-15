@@ -49,11 +49,12 @@ experiment.train({level!r})
 ''', f'train-{level}')
 
     add('code', '''# 현재 run의 학습 checkpoint에 단일 stage-aware 실행 정책 적용
-import hashlib, importlib.metadata, os, shutil, subprocess, sys
+import hashlib, importlib.metadata, json, os, shutil, subprocess, sys
 from pathlib import Path
 import torch
 
-RUN_DIR = Path(CFG['output_root'])/CFG['run_name']
+# Use the trainer's actual directory; it includes the profile suffix.
+RUN_DIR = Path(experiment.run_dir)
 CANDIDATE = RUN_DIR/'integrated_candidate'
 CHECKPOINT_OVERRIDES = {'easy':'', 'medium':'', 'hard':''}
 STAGE_HORIZONS = dict(pick=2, carry=6, place=2, done=1)
@@ -75,7 +76,8 @@ for level in DIMS:
     if checkpoint is not None:
         selected[level] = checkpoint
 if not selected:
-    raise FileNotFoundError('먼저 하나 이상의 experiment.train(level) 셀을 실행하세요.')
+    raise FileNotFoundError(f'{RUN_DIR}에서 latest.pt를 찾지 못했습니다. '
+                            '03 셀의 로컬 작업 경로와 학습 checkpoint 저장 로그를 확인하세요.')
 
 def sha256(path):
     with Path(path).open('rb') as handle:

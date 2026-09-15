@@ -1,4 +1,5 @@
 import copy
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -13,6 +14,8 @@ from stage_policy import load_stage
 from stage_model import StageACT
 from stage_schema import PICK, CARRY, PLACE, COMPLETE, RECOVER
 from build_stage_deadline_notebook import make_notebook as make_deadline_notebook
+from build_stage_deadline_notebook import CONFIG as DEADLINE_CONFIG
+from stage_experiment import StageExperiment
 
 
 class Controlled(torch.nn.Module):
@@ -170,6 +173,37 @@ class ChunkTests(unittest.TestCase):
             torch.save(saved, path)
             with self.assertRaises(ValueError):
                 load_chunk_stage(path, torch.zeros(1,54), SimpleNamespace(shape=(4,)), 'cpu', **base)
+
+    def test_candidate_cell_executes_without_imports_from_previous_cells(self):
+        notebook = make_deadline_notebook()
+        cell = next(c for c in notebook['cells'] if c['metadata'].get('id') == 'integrated-candidate')
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = dict(DEADLINE_CONFIG, output_root=directory, run_name='candidate-test',
+                       project_commit='test-project', team='test-team')
+            experiment = StageExperiment(cfg, {})
+            self.assertEqual(experiment.run_dir.name, 'candidate-test_benchmark')
+            original = {}
+            for level, dim in (('easy',54), ('medium',72), ('hard',90)):
+                folder = experiment.run_dir/level/'checkpoints'
+                folder.mkdir(parents=True)
+                path, policy = checkpoint(folder, dim)
+                latest = folder/'latest.pt'
+                path.rename(latest)
+                (folder/'policy_config.json').write_text(json.dumps(policy), encoding='utf-8')
+                original[level] = latest.read_bytes()
+            namespace = dict(CFG=cfg, PROJECT=ROOT, experiment=experiment)
+            exec(compile(''.join(cell['source']), 'integrated-candidate', 'exec'), namespace)
+            self.assertEqual(namespace['RUN_DIR'], experiment.run_dir)
+            manifest = json.loads((namespace['CANDIDATE']/'manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(set(manifest['levels']), {'easy','medium','hard'})
+            for level, row in manifest['levels'].items():
+                source = namespace['selected'][level]
+                self.assertEqual(source.name, 'latest.pt')
+                self.assertEqual(source.read_bytes(), original[level])
+                target = namespace['CANDIDATE']/'checkpoints'/level/'model.pt'
+                policy = load_chunk_stage(target, torch.zeros(1,row['model_config']['state_dim']),
+                    SimpleNamespace(shape=(4,)), 'cpu', **row['policy_config'])
+                self.assertEqual(policy.act(torch.zeros(1,row['model_config']['state_dim'])).shape, (1,4))
 
     def test_notebook_cells_compile_train_resume_and_official_eval(self):
         deadline = make_deadline_notebook()

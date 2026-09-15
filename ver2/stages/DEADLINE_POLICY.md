@@ -28,7 +28,7 @@ Google Drive는 사용하지 않습니다. dataset cache, simulator, 학습 결�
 
 Fine-grained token은 `SongYunu/moveBoxes` 저장소의 **Contents: Read and write** 권한이 필요합니다. 토큰은 런타임 환경변수에만 둡니다.
 
-기본 `run_name`은 `moveboxes_stage_chunk_deadline_v1`입니다. 이 이름의 Release에는 이 실행에서 만든 상태만 저장됩니다. 과거 Easy/Medium/Hard best를 자동 복원하지 않습니다. 중단 후에는 새 런타임에서 01~05를 다시 실행한 다음, 중단된 난이도의 수집 또는 학습 셀을 다시 실행합니다.
+기본 `run_name`은 `moveboxes_stage_chunk_deadline_v1`입니다. 실제 학습 폴더에는 profile 접미사가 붙고, Release는 `run-moveboxes_stage_chunk_deadline_v1_benchmark`입니다. candidate 셀은 경로를 다시 조립하지 않고 `experiment.run_dir`를 사용합니다. 과거 Easy/Medium/Hard best를 자동 복원하지 않습니다. 중단 후에는 새 런타임에서 01~05를 다시 실행한 다음, 중단된 난이도의 수집 또는 학습 셀을 다시 실행합니다.
 
 - recovery 수집: 매 시도마다 `manifest.json`과 성공 episode를 동기화
 - 학습: 매 1,000 iteration마다 `latest.pt` 동기화
@@ -113,11 +113,11 @@ show_official_video('public_100ep')
 100-episode 평가는 점수 계산 후 별도의 짧은 video rollout을 저장하므로 100 episode 전체를 영상으로 만드는 것은 아닙니다. 영상은 현재 integrated Stage ACT policy가 실제 simulator에서 실행한 결과입니다.
 ## 결과 위치
 
-- 현재 학습: `/content/moveboxes_runs/moveboxes_stage_chunk_deadline_v1`
+- 현재 학습: `/content/moveboxes_runs/moveboxes_stage_chunk_deadline_v1_benchmark`
 - 기본 평가 checkpoint: `<run>/<level>/checkpoints/latest.pt` (`best_val.pt`는 loss 기반이라 자동 선택하지 않음)
 - 공식 평가 로그·영상: `<run>/<level>/integrated_official_eval`
 - candidate: `<run>/integrated_candidate.zip`
-- 원격 복구: GitHub Release `run-moveboxes_stage_chunk_deadline_v1`
+- 원격 복구: GitHub Release `run-moveboxes_stage_chunk_deadline_v1_benchmark`
 
 candidate에는 inference source, 현재 run checkpoint 사본, 새 policy sidecar, `submission.yaml`, SHA256 provenance manifest만 포함합니다. recovery expert와 training 코드는 제출 ZIP에 포함하지 않습니다.
 
