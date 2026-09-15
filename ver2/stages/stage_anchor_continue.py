@@ -128,7 +128,7 @@ def train(child, level):
     child.train(level)
 
 
-def prepare_success_rl(base, level, *, run_suffix='_success_rl_v1', iterations=8,
+def prepare_success_rl(base, level, *, run_suffix='_success_rl_v2', iterations=8,
                        num_envs=16, lr=5e-6, xyz_std=.05):
     """Prepare conservative PPO from one immutable per-difficulty anchor."""
     if level not in ('medium','hard') or not run_suffix:

@@ -7,7 +7,8 @@ from collections import deque
 from pathlib import Path
 
 import torch
-from torch.distributions import Bernoulli, Normal, kl_divergence
+from torch.distributions import Bernoulli, Normal
+from torch.nn import functional as F
 
 from github_store import sync_from_env
 from marso_experiment import save_json
@@ -45,6 +46,13 @@ def sparse_success_delta(current, previous):
     if current.shape != previous.shape:
         raise ValueError('success counters must have matching shapes')
     return (current-previous).clamp_min(0).float()
+
+
+def bernoulli_kl_from_logits(current_logits, reference_logits):
+    """KL(current || reference) without converting saturated logits to log(0)."""
+    probability = current_logits.sigmoid()
+    return (probability*(F.logsigmoid(current_logits)-F.logsigmoid(reference_logits))+
+            (1-probability)*(F.logsigmoid(-current_logits)-F.logsigmoid(-reference_logits)))
 
 
 @torch.no_grad()
@@ -123,10 +131,13 @@ def ppo_update(model, reference, rollout, cfg, optimizer, device):
             with torch.no_grad():
                 ref_normal, ref_grip = _distribution(reference, history, previous, stage,
                                                       cfg['xyz_std'], cfg['grip_temperature'])
-            reference_kl = (kl_divergence(normal, ref_normal).sum(-1)+
-                            kl_divergence(bernoulli, ref_grip)).mean()
+            normal_kl = ((normal.loc-ref_normal.loc).square()/(2*cfg['xyz_std']**2)).sum(-1)
+            grip_kl = bernoulli_kl_from_logits(bernoulli.logits, ref_grip.logits)
+            reference_kl = (normal_kl+grip_kl).mean()
             entropy = (normal.entropy().sum(-1)+bernoulli.entropy()).mean()
             loss = policy_loss+cfg['reference_kl_weight']*reference_kl-cfg['entropy_weight']*entropy
+            if not torch.isfinite(loss):
+                raise FloatingPointError('Non-finite PPO loss; checkpoint was not written')
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_((p for p in model.parameters() if p.requires_grad), .5)

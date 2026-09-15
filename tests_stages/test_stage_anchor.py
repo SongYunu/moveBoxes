@@ -12,7 +12,7 @@ import torch
 from build_stage_anchor_notebook import make_notebook
 from stage_anchor_continue import ANCHORS, DIMS, package
 from stage_model import StageACT
-from stage_success_rl import discounted_returns, sparse_success_delta
+from stage_success_rl import bernoulli_kl_from_logits, discounted_returns, sparse_success_delta
 
 
 class AnchorTests(unittest.TestCase):
@@ -37,11 +37,16 @@ class AnchorTests(unittest.TestCase):
         torch.testing.assert_close(
             sparse_success_delta(torch.tensor([2,1,0]), torch.tensor([1,1,2])),
             torch.tensor([1.,0.,0.]))
+        extreme_kl = bernoulli_kl_from_logits(torch.tensor([1000.,-1000.]),
+                                              torch.tensor([-1000.,1000.]))
+        self.assertTrue(torch.isfinite(extreme_kl).all())
+        self.assertTrue((extreme_kl > 0).all())
         rl_source = (ROOT/'ver2/stages/stage_success_rl.py').read_text(encoding='utf-8')
         self.assertIn("env.unwrapped.evaluate()['success_count']", rl_source)
         self.assertIn('obs, _, _, _, _ = env.step(action)', rl_source)
         self.assertNotIn('action_loss(', rl_source)
         self.assertNotIn('stage_loss(', rl_source)
+        self.assertIn("raise FloatingPointError('Non-finite PPO loss", rl_source)
 
     def test_package_uses_one_policy_and_three_difficulty_weights(self):
         with tempfile.TemporaryDirectory() as tmp:
