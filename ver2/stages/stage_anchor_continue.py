@@ -1,8 +1,10 @@
 """Continue each difficulty from its checksum-verified historical StageACT anchor."""
 import copy
+import hashlib
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 from github_store import GitHubStore, safe_target
@@ -126,11 +128,76 @@ def train(child, level):
     child.train(level)
 
 
-def package(child, *, use_trained=None, folder_name='anchor_candidate'):
+def prepare_success_rl(base, level, *, run_suffix='_success_rl_v1', iterations=8,
+                       num_envs=16, lr=5e-6, xyz_std=.05):
+    """Prepare conservative PPO from one immutable per-difficulty anchor."""
+    if level not in ('medium','hard') or not run_suffix:
+        raise ValueError('Success RL is available only for Medium/Hard in a separate run')
+    if type(iterations) is not int or not 1 <= iterations <= 32:
+        raise ValueError('RL iterations must be in 1..32')
+    if type(num_envs) is not int or not 2 <= num_envs <= 32 or not 0 < lr <= 1e-5 or not 0 < xyz_std <= .15:
+        raise ValueError('Invalid conservative RL configuration')
+    cfg = copy.deepcopy(base.cfg)
+    cfg.update(run_name=base.cfg['run_name']+'_'+level+run_suffix)
+    child = type(base)(cfg, dict(base.sources))
+    child.connect()
+    child._stage_helpers()
+    for difficulty, known in ANCHORS.items():
+        source = base.run_dir/difficulty/'anchor.pt'
+        target = child.run_dir/difficulty/'anchor.pt'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and digest(target) != known['sha256']:
+            raise ValueError('Existing RL anchor differs; change run_suffix')
+        if not target.exists():
+            shutil.copy2(source, target)
+    folder = child.run_dir/level
+    rl = dict(iterations=iterations, num_envs=num_envs, max_steps=200, seed=120000,
+        lr=lr, xyz_std=xyz_std, grip_temperature=.5, gamma=.995,
+        clip_ratio=.1, reference_kl_weight=.2, entropy_weight=1e-4,
+        update_epochs=2, minibatch_size=512,
+        gate_threshold=.65, stage_threshold=.6)
+    identity = dict(level=level, anchor_sha256=ANCHORS[level]['sha256'], rl_config=rl,
+        source_sha256=hashlib.sha256(child.sources['stage_success_rl.py'].encode()).hexdigest())
+    identity['job_signature'] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    job = dict(identity, folder=str(folder), anchor=str(folder/'anchor.pt'),
+        config_dir=str(child.repo/'conf'))
+    previous = read_json(folder/'success_rl_job.json')
+    if previous and previous != job:
+        raise ValueError('Saved success-RL job differs; change run_suffix')
+    save_json(folder/'success_rl_job.json', job)
+    save_json(folder/'success_rl_origin.json', dict(
+        objective='maximize environment sparse delta success_count',
+        imitation_loss=False, dense_reward=False, critic=False,
+        frozen='encoder, stage supervisor, gate head and stage head',
+        trainable=['queries','decoder','output'], anchor_kl=True,
+        anchor_sha256=ANCHORS[level]['sha256']))
+    print(f'[{level}] success RL: {iterations} rollouts x {num_envs} envs; sparse reward only')
+    return child
+
+
+def train_success_rl(child, level):
+    if level not in ('medium','hard'):
+        raise ValueError('Easy anchor is frozen')
+    folder = child.run_dir/level
+    job = folder/'success_rl_job.json'
+    if not job.is_file():
+        raise FileNotFoundError(job)
+    if read_json(folder/'training_complete.json'):
+        print(f'[{level}] completed success-RL checkpoint reused')
+        return
+    with child.persist_operation(level):
+        child.run([sys.executable, str(child.repo/'stage_success_rl.py'), str(job)],
+                  cwd=child.repo, log=folder/'success_rl.log')
+
+
+def package(child, *, use_trained=None, checkpoint_overrides=None, folder_name='anchor_candidate'):
     """Package one implementation with independently selected per-level weights."""
     import torch
     selected = {'medium':False, 'hard':False}
     selected.update(use_trained or {})
+    overrides = {key:Path(value) for key,value in (checkpoint_overrides or {}).items()}
+    if any(level not in ANCHORS for level in overrides):
+        raise ValueError('Unknown checkpoint override level')
     target = child.run_dir/folder_name
     target.mkdir(parents=True, exist_ok=True)
     for name in ('stage_policy.py','stage_model.py','stage_schema.py','act_v2_model.py'):
@@ -140,7 +207,7 @@ def package(child, *, use_trained=None, folder_name='anchor_candidate'):
     for level, known in ANCHORS.items():
         anchor = child.run_dir/level/'anchor.pt'
         trained = child.run_dir/level/'checkpoints/latest.pt'
-        source = trained if level != 'easy' and selected[level] else anchor
+        source = overrides.get(level, trained if level != 'easy' and selected[level] else anchor)
         if not source.is_file():
             raise FileNotFoundError(source)
         saved = torch.load(source, map_location='cpu', weights_only=True)
@@ -151,8 +218,9 @@ def package(child, *, use_trained=None, folder_name='anchor_candidate'):
         out.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, out/'model.pt')
         save_json(out/'policy_config.json', config)
+        selection = 'success_rl' if level in overrides else 'trained' if source == trained else 'anchor'
         manifest['levels'][level] = dict(source=str(source), checkpoint_sha256=digest(source),
-            selection='trained' if source == trained else 'anchor', step=saved.get('step'),
+            selection=selection, step=saved.get('step'), rl_iteration=saved.get('rl_iteration'),
             policy_config=config, historical_anchor_sha256=known['sha256'])
         lines.append(f'    {level}: {{ checkpoint: checkpoints/{level}/model.pt }}')
     (target/'submission.yaml').write_text('team: '+json.dumps(child.cfg['team'])+
