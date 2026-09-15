@@ -4,10 +4,12 @@ from pathlib import Path
 
 from build_stage_deadline_notebook import make_notebook as base_notebook
 
+IMPLEMENTATION_COMMIT = '4730e696be227c3c50d80f1c96af879897bf7511'
+
 
 def make_notebook():
     nb = base_notebook(dict(run_name='moveboxes_stage_anchor_v1',
-                            project_ref='stage-act-chunk-compare'))
+                            project_ref=IMPLEMENTATION_COMMIT))
     cells = nb['cells'][:5]
 
     def add(kind, source, ident):
