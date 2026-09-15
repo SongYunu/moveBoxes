@@ -128,13 +128,13 @@ def train(child, level):
     child.train(level)
 
 
-def prepare_success_rl(base, level, *, run_suffix='_success_rl_v2', iterations=8,
+def prepare_success_rl(base, level, *, run_suffix='_success_rl_v4_unbounded', iterations=8,
                        num_envs=16, lr=5e-6, xyz_std=.05):
     """Prepare conservative PPO from one immutable per-difficulty anchor."""
     if level not in ('medium','hard') or not run_suffix:
         raise ValueError('Success RL is available only for Medium/Hard in a separate run')
-    if type(iterations) is not int or not 1 <= iterations <= 32:
-        raise ValueError('RL iterations must be in 1..32')
+    if type(iterations) is not int or iterations < 1:
+        raise ValueError('RL iterations must be a positive integer')
     if type(num_envs) is not int or not 2 <= num_envs <= 32 or not 0 < lr <= 1e-5 or not 0 < xyz_std <= .15:
         raise ValueError('Invalid conservative RL configuration')
     cfg = copy.deepcopy(base.cfg)
@@ -156,14 +156,22 @@ def prepare_success_rl(base, level, *, run_suffix='_success_rl_v2', iterations=8
         clip_ratio=.1, reference_kl_weight=.2, entropy_weight=1e-4,
         update_epochs=2, minibatch_size=512,
         gate_threshold=.65, stage_threshold=.6)
-    identity = dict(level=level, anchor_sha256=ANCHORS[level]['sha256'], rl_config=rl,
+    fixed_rl = {key:value for key,value in rl.items() if key != 'iterations'}
+    identity = dict(level=level, anchor_sha256=ANCHORS[level]['sha256'], fixed_rl_config=fixed_rl,
         source_sha256=hashlib.sha256(child.sources['stage_success_rl.py'].encode()).hexdigest())
     identity['job_signature'] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    job = dict(identity, folder=str(folder), anchor=str(folder/'anchor.pt'),
+    job = dict(identity, rl_config=rl, folder=str(folder), anchor=str(folder/'anchor.pt'),
         config_dir=str(child.repo/'conf'))
     previous = read_json(folder/'success_rl_job.json')
-    if previous and previous != job:
-        raise ValueError('Saved success-RL job differs; change run_suffix')
+    if previous:
+        if previous.get('job_signature') != job['job_signature']:
+            raise ValueError('Saved success-RL method differs; change run_suffix')
+        previous_iterations = previous['rl_config']['iterations']
+        if iterations < previous_iterations:
+            raise ValueError(f'Cannot reduce an existing RL budget ({previous_iterations} -> {iterations})')
+        if iterations > previous_iterations:
+            (folder/'training_complete.json').unlink(missing_ok=True)
+            print(f'[{level}] RL budget extended: {previous_iterations} -> {iterations}')
     save_json(folder/'success_rl_job.json', job)
     save_json(folder/'success_rl_origin.json', dict(
         objective='maximize environment sparse delta success_count',

@@ -34,6 +34,9 @@ from stage_anchor_continue import (ANCHORS, package, prepare, prepare_success_rl
                                    train_success_rl)
 
 MAX_STEPS = 200
+MEDIUM_RL_ITERATIONS = 64  # 양의 정수: 상한 없음. 늘린 뒤 재실행하면 이어서 학습
+HARD_RL_ITERATIONS = 64    # 양의 정수: 상한 없음
+RL_EVAL_EVERY = 8
 UPSTREAM = Path(CFG['repo_dir'])
 OFFICIAL = UPSTREAM/'conf/eval/default.yaml'
 anchor_exp = prepare(experiment, run_suffix='_anchor_success_base_v1')
@@ -86,7 +89,7 @@ print(json.dumps(BASELINE_RESULTS, indent=2))
 
     add('markdown', '''## 성공 보상 RL
 
-각 RL iteration은 무작위 실전 환경 16개를 200 step 실행합니다. 보상은 환경이 제공하는 `delta success_count`뿐입니다. 성공 상자가 하나도 없는 rollout은 업데이트를 건너뜁니다. 총 24회까지 학습하되 8회마다 공식 평가합니다. 중간 최고 체크포인트를 별도로 저장하므로 뒤의 라운드에서 성능이 떨어져도 좋은 모델을 잃지 않습니다. 매 iteration마다 모델·optimizer·난수 상태를 GitHub에 저장하므로 셀 재실행 시 이어집니다.
+각 RL iteration은 무작위 실전 환경 16개를 200 step 실행합니다. 보상은 환경이 제공하는 `delta success_count`뿐입니다. 성공 상자가 하나도 없는 rollout은 업데이트를 건너뜁니다. 반복 수에는 상한이 없으며 06번 셀의 `MEDIUM_RL_ITERATIONS`와 `HARD_RL_ITERATIONS`에서 정합니다. `RL_EVAL_EVERY`마다 공식 평가하고 중간 최고 체크포인트를 별도로 저장하므로 뒤의 라운드에서 성능이 떨어져도 좋은 모델을 잃지 않습니다. 반복 수를 더 큰 값으로 바꾸고 재실행하면 기존 optimizer와 체크포인트에서 계속됩니다.
 ''', 'success-rl-guide')
 
     add('code', '''# 09 · 8회 단위 공식 평가와 중간 최고 체크포인트 보존
@@ -114,22 +117,30 @@ def evaluate_success_round(rl_exp, level, stop, best):
     rl_exp.sync_level(level)
     return best
 
-# Medium: 하나의 학습 궤적을 8 → 16 → 24회까지 이어서 평가
-medium_rl = prepare_success_rl(anchor_exp, 'medium', run_suffix='_success_rl_v3_long',
-                               iterations=24, num_envs=16, lr=5e-6, xyz_std=.05)
+def evaluation_stops(total, every=RL_EVAL_EVERY):
+    if type(total) is not int or total < 1 or type(every) is not int or every < 1:
+        raise ValueError('RL 반복 수와 평가 간격은 양의 정수여야 합니다.')
+    stops = list(range(every, total+1, every))
+    if not stops or stops[-1] != total:
+        stops.append(total)
+    return stops
+
+# Medium: 설정한 횟수까지 하나의 학습 궤적을 이어서 평가
+medium_rl = prepare_success_rl(anchor_exp, 'medium', iterations=MEDIUM_RL_ITERATIONS,
+                               num_envs=16, lr=5e-6, xyz_std=.05)
 MEDIUM_BEST = dict(BASELINE_RESULTS['medium'], iteration=0, source='anchor')
-for stop in (8, 16, 24):
+for stop in evaluation_stops(MEDIUM_RL_ITERATIONS):
     train_success_rl(medium_rl, 'medium', until_iteration=stop)
     MEDIUM_BEST = evaluate_success_round(medium_rl, 'medium', stop, MEDIUM_BEST)
 MEDIUM_USE_RL = MEDIUM_BEST['source'] == 'success_rl'
 print('Medium 최종 선택:', MEDIUM_BEST)
 ''', 'success-rl-medium')
 
-    add('code', '''# 10 · Hard도 8 → 16 → 24회까지 이어서 평가
-hard_rl = prepare_success_rl(anchor_exp, 'hard', run_suffix='_success_rl_v3_long',
-                             iterations=24, num_envs=16, lr=5e-6, xyz_std=.06)
+    add('code', '''# 10 · Hard도 설정한 횟수까지 이어서 평가
+hard_rl = prepare_success_rl(anchor_exp, 'hard', iterations=HARD_RL_ITERATIONS,
+                             num_envs=16, lr=5e-6, xyz_std=.06)
 HARD_BEST = dict(BASELINE_RESULTS['hard'], iteration=0, source='anchor')
-for stop in (8, 16, 24):
+for stop in evaluation_stops(HARD_RL_ITERATIONS):
     train_success_rl(hard_rl, 'hard', until_iteration=stop)
     HARD_BEST = evaluate_success_round(hard_rl, 'hard', stop, HARD_BEST)
 HARD_USE_RL = HARD_BEST['source'] == 'success_rl'
