@@ -4,7 +4,7 @@ from pathlib import Path
 
 from build_stage_deadline_notebook import make_notebook as base_notebook
 
-IMPLEMENTATION_COMMIT = '15da10cc5445d6bfcbb15e47389a0e465822dc40'
+IMPLEMENTATION_COMMIT = '77fbfdd8018dc48175b708232bc0f4efb2d4da81'
 
 
 def make_notebook():
@@ -142,4 +142,3 @@ if __name__ == '__main__':
     target = Path(__file__).parent/'notebooks/moveboxes_stage_anchor_continue_colab.ipynb'
     target.write_text(json.dumps(notebook, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     print(target)
-
