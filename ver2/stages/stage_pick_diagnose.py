@@ -52,7 +52,7 @@ def diagnose(checkpoint, config_dir, level, output, seed=61000, steps=120):
             row['stage_name'] = STAGES[row['stage']]
             row['proposed_stage_name'] = STAGES[row['proposed_stage']]
             row['gate_name'] = GATES[row['gate']]
-            if hasattr(policy, 'action_buffer') and policy.action_buffer is not None:
+            if 'gripper_logit' not in row and hasattr(policy, 'action_buffer') and policy.action_buffer is not None:
                 row['gripper_logit'] = float(policy.action_buffer[0, policy.cursor[0]-1, 3])
             rows.append(row)
             if step % 10 == 0 or row['accepted'] or step == steps-1:

@@ -55,11 +55,13 @@ import torch
 
 # Use the trainer's actual directory; it includes the profile suffix.
 RUN_DIR = Path(experiment.run_dir)
-CANDIDATE = RUN_DIR/'integrated_candidate'
+CANDIDATE = RUN_DIR/'integrated_candidate_v2'
 CHECKPOINT_OVERRIDES = {'easy':'', 'medium':'', 'hard':''}
 STAGE_HORIZONS = dict(pick=2, carry=6, place=2, done=1)
 GRIPPER_MARGIN = .5
 GRIPPER_CONFIRM_STEPS = 2
+FRESH_GRIPPER = True
+GRIPPER_FSM = False
 MAX_STEPS = 200
 SMOKE_SEED = 61000
 DIMS = {'easy':54, 'medium':72, 'hard':90}
@@ -105,7 +107,7 @@ for level, checkpoint in selected.items():
     if policy.get('model_config') != model_config:
         raise ValueError(f'{level}: checkpoint/sidecar architecture 불일치')
     policy.update(model_config=model_config, stage_aware_chunk=True,
-                  stage_horizons=STAGE_HORIZONS, gripper_fsm=True,
+        stage_horizons=STAGE_HORIZONS, gripper_fsm=GRIPPER_FSM, fresh_gripper=FRESH_GRIPPER,
                   gripper_margin=GRIPPER_MARGIN,
                   gripper_confirm_steps=GRIPPER_CONFIRM_STEPS,
                   auto_reset_steps=MAX_STEPS-1)
@@ -206,16 +208,17 @@ SMOKE_CONFIG = RUN_DIR/'integrated_smoke_eval.yaml'
 SMOKE_CONFIG.write_text('eval:\\n  n_episodes: 1\\n  seeds: ['+str(SMOKE_SEED)+']\\n', encoding='utf-8')
 UPSTREAM = Path(CFG['repo_dir'])
 
-def run_official(level, eval_config, label):
+def run_official(level, eval_config, label, candidate=None):
+    candidate = Path(candidate) if candidate is not None else CANDIDATE
     output = RUN_DIR/level/'integrated_official_eval'/label
     output.mkdir(parents=True, exist_ok=True)
     command = [sys.executable, str(UPSTREAM/'eval.py'), 'difficulty='+level,
         'obs_mode=state', 'policy=stage_chunk_policy:load_policy',
-        'checkpoint='+str(CANDIDATE/'checkpoints'/level/'model.pt'),
+        'checkpoint='+str(candidate/'checkpoints'/level/'model.pt'),
         'eval_config='+str(eval_config), 'max_episode_steps='+str(MAX_STEPS),
         'hydra.run.dir='+str(output)]
     child_env = dict(os.environ)
-    child_env['PYTHONPATH'] = str(CANDIDATE)+os.pathsep+str(UPSTREAM)+os.pathsep+child_env.get('PYTHONPATH','')
+    child_env['PYTHONPATH'] = str(candidate)+os.pathsep+str(UPSTREAM)+os.pathsep+child_env.get('PYTHONPATH','')
     log = output/'official_eval.log'
     with log.open('w', encoding='utf-8') as handle:
         process = subprocess.Popen(command, cwd=UPSTREAM, env=child_env,
@@ -350,7 +353,7 @@ from pathlib import Path
 if 'experiment' not in globals() or 'CFG' not in globals():
     raise RuntimeError('학습한 노트북의 같은 런타임 아래에 이 셀을 추가하세요.')
 RUN_DIR = Path(experiment.run_dir)
-CANDIDATE = RUN_DIR/'integrated_candidate'
+CANDIDATE = Path(globals().get('CANDIDATE', RUN_DIR/'integrated_candidate'))
 UPSTREAM = Path(CFG['repo_dir'])
 manifest = json.loads((CANDIDATE/'manifest.json').read_text(encoding='utf-8'))
 selected = {level:CANDIDATE/'checkpoints'/level/'model.pt'

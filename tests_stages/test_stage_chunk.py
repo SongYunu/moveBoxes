@@ -20,6 +20,11 @@ from build_stage_deadline_notebook import make_runtime_repair_notebook
 from stage_experiment import StageExperiment
 from stage_pick_diagnose import decision_row
 from stage_pick_finetune import prepare_pick_finetune, package_pick_finetune
+from build_stage_execution_check_notebook import make_notebook as make_execution_check_notebook
+import stage_reference_check
+from stage_pick_sampling import StageWindows as AllPickWindows
+from stage_all_pick_retrain import prepare_retrain, package_retrain
+from build_stage_retrain_notebook import make_notebook as make_retrain_notebook
 
 
 class Controlled(torch.nn.Module):
@@ -108,7 +113,7 @@ class ChunkTests(unittest.TestCase):
             collection.mkdir(parents=True)
             episode = collection/'episode.npz'
             episode.write_bytes(b'saved-recovery')
-            (collection/'manifest.json').write_text(json.dumps(dict(complete=True,episodes=[dict(file=episode.name,sha256=digest(episode))])))
+            (collection/'manifest.json').write_text(json.dumps(dict(complete=True,episodes=[dict(file=episode.name,sha256=digest(episode),accepted=True)])))
             (parent.run_dir/'easy/stage_train_job.json').write_text(json.dumps(dict(
                 model_config=policy['model_config'],train_config=dict(lr=.0004,total_iters=12000),
                 num_demos=200,data='original-dataset.h5',
@@ -123,6 +128,15 @@ class ChunkTests(unittest.TestCase):
             self.assertEqual(job['policy_config']['stage_horizons'],policy['stage_horizons'])
             self.assertEqual((child.run_dir/'easy/initial_model.pt').read_bytes(),(ckdir/'model.pt').read_bytes())
             self.assertEqual(prepare_pick_finetune(parent,candidate).run_dir,child.run_dir)
+            fresh = prepare_retrain(parent,'easy')
+            fresh_job = json.loads((fresh.run_dir/'easy/stage_train_job.json').read_text())
+            self.assertNotIn('warm_start',fresh_job)
+            self.assertFalse((fresh.run_dir/'easy/initial_model.pt').exists())
+            self.assertEqual(fresh_job['trainer'],'stage_pick_train.py')
+            self.assertEqual(fresh_job['train_config']['pick_sampling'],'all_picks')
+            self.assertEqual(fresh_job['policy_config']['act_horizon'],1)
+            self.assertEqual(fresh_job['policy_config']['auto_reset_steps'],199)
+            self.assertEqual(prepare_retrain(parent,'easy').run_dir,fresh.run_dir)
             latest = child.run_dir/'easy/checkpoints/latest.pt'
             latest.parent.mkdir(parents=True)
             weights = torch.load(ckdir/'model.pt',weights_only=True)
@@ -138,6 +152,212 @@ class ChunkTests(unittest.TestCase):
 
     def setUp(self):
         torch.set_num_threads(2)
+
+    def test_fresh_gripper_closes_and_releases_without_waiting_for_xyz_chunk(self):
+        policy = ChunkStagePolicy(Controlled(),fresh_gripper=True,gripper_fsm=False)
+        self.assertEqual(float(policy.act(obs(marker=.1,grip=1))[0,3]),1.)
+        contact = policy.act(obs(marker=.9,grip=-1))
+        self.assertEqual(float(contact[0,3]),-1.)
+        self.assertAlmostEqual(float(contact[0,0]),.11,places=6)
+        self.assertFalse(bool(policy.last_decision['replanned'][0]))
+        policy.act(obs(marker=.3,grip=-1))
+        release = policy.act(obs(marker=.8,grip=1))
+        self.assertEqual(float(release[0,3]),1.)
+        self.assertAlmostEqual(float(release[0,0]),.31,places=6)
+        self.assertEqual(policy.stage_horizons,dict(pick=2,carry=6,place=2,done=1))
+
+    def test_execution_check_preserves_bootstrap_and_runs_no_training(self):
+        notebook = make_execution_check_notebook()
+        base = make_deadline_notebook()
+        self.assertEqual(notebook['cells'][:5],base['cells'][:5])
+        source = '\n'.join(''.join(c['source']) for c in notebook['cells'][5:])
+        self.assertNotIn('experiment.train(',source)
+        self.assertNotIn('experiment.collect(',source)
+        self.assertIn("candidate=REFERENCE_ONLY",source)
+        self.assertLess(source.index('def show_all_official_videos'),
+                        source.index("show_all_official_videos('smoke')"))
+        for cell in notebook['cells']:
+            if cell['cell_type'] == 'code':
+                compile(''.join(cell['source']),'execution-check','exec')
+
+    def test_retrain_notebook_preserves_bootstrap_and_trains_each_level_fresh(self):
+        notebook = make_retrain_notebook()
+        self.assertEqual(notebook['cells'][:5],make_deadline_notebook()['cells'][:5])
+        source = '\n'.join(''.join(c['source']) for c in notebook['cells'][5:])
+        self.assertIn("policy=stage_policy:load_policy",source)
+        self.assertNotIn('prepare_pick_finetune(',source)
+        self.assertNotIn('stage_chunk_policy:load_policy',source)
+        self.assertIn("run_official('easy',SMOKE_CONFIG,'smoke')",source)
+        self.assertIn("run_official('easy',OFFICIAL_EVAL_CONFIG,'default')",source)
+        self.assertLess(source.index("run_official('easy',SMOKE_CONFIG,'smoke')"),
+                        source.index("run_official('easy',OFFICIAL_EVAL_CONFIG,'default')"))
+        self.assertIn("Video(str(videos[-1]),embed=True",source)
+        self.assertNotIn('drive.mount',source)
+        for level in ('easy','medium','hard'):
+            self.assertIn(f"prepare_retrain(experiment,'{level}'",source)
+        for cell in notebook['cells']:
+            if cell['cell_type']=='code':
+                compile(''.join(cell['source']),'retrain','exec')
+
+    def test_all_pick_focus_includes_later_parcels_and_keeps_retry_order(self):
+        stages = torch.tensor([0,0,1,0,0,1,0,0,1,0,0,0,1])
+        targets = torch.tensor([0,0,0,0,0,0,2,2,2,5,5,5,5])
+        trajectories = [dict(actions=torch.zeros(len(stages),4),stage=stages,target=targets,
+            source='recovery',gate=torch.zeros(len(stages),dtype=torch.long))]
+        sampler = AllPickWindows(trajectories,[0],2,4,first_pick_fraction=.5)
+        self.assertEqual(sampler.pick_order_counts,{'0':4,'1':2,'2':3})
+        self.assertEqual(sampler.pick_order_episodes,{'0':1,'1':1,'2':1})
+        counts = {target:sum(int(targets[t])==target for _,t in sampler.first_pick) for target in (0,2,5)}
+        self.assertEqual(counts,{0:4,2:4,5:4})
+        self.assertTrue(all(int(stages[t])==PICK for _,t in sampler.first_pick))
+        valid = AllPickWindows(trajectories,[0],2,4,training=False,first_pick_fraction=.5)
+        self.assertEqual(valid.pick_order_counts,{})
+
+    def test_all_pick_training_restores_optimizer_and_sampling_rng(self):
+        from test_stages import StageTests
+        import stage_train
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root/'data.h5'
+            StageTests().make_data(data)
+            arch = dict(state_dim=54,history=4,chunk_size=16,width=32,heads=4,layers=1,latent_dim=8)
+            cfg = dict(seed=42,batch_size=4,lr=.001,total_iters=8,save_freq=4,warmup_steps=2,
+                kl_weight=.001,stage_loss_weight=.3,gate_loss_weight=.3,position_noise=.001,
+                validation_batches=1,amp=False,console_interval_seconds=999,first_pick_fraction=.5,
+                pick_sampling='all_picks',action_training_mode='prior')
+            job = dict(folder=str(root/'full'),data=str(data),model_config=arch,train_config=cfg,
+                policy_config=dict(model_config=arch),source_sha256='all-pick-test',device='cpu')
+            with mock.patch.object(stage_train,'StageWindows',AllPickWindows),mock.patch.object(stage_train,'sync_from_env'):
+                stage_train.train(job)
+            full = torch.load(root/'full/checkpoints/latest.pt',weights_only=True)
+            job['folder'] = str(root/'resume')
+            with mock.patch.object(stage_train,'StageWindows',AllPickWindows), \
+                 mock.patch.object(stage_train,'sync_from_env',side_effect=RuntimeError('disconnect')):
+                with self.assertRaisesRegex(RuntimeError,'disconnect'):
+                    stage_train.train(job)
+            with mock.patch.object(stage_train,'StageWindows',AllPickWindows),mock.patch.object(stage_train,'sync_from_env'):
+                stage_train.train(job)
+            resumed = torch.load(root/'resume/checkpoints/latest.pt',weights_only=True)
+            for name,value in full['model'].items():
+                torch.testing.assert_close(resumed['model'][name],value,rtol=0,atol=0)
+            torch.testing.assert_close(resumed['sample_rng'],full['sample_rng'],rtol=0,atol=0)
+
+    def test_retrain_export_loads_native_policy_and_preserves_normalization(self):
+        from stage_policy import StagePolicy
+        from marso_experiment import digest
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = {name:(ROOT/'ver2/stages'/name).read_text(encoding='utf-8') for name in
+                       ('stage_policy.py','stage_model.py','stage_schema.py')}
+            sources['act_v2_model.py'] = (ROOT/'ver2/act_v2_model.py').read_text(encoding='utf-8')
+            child = SimpleNamespace(run_dir=root,sources=sources,cfg=dict(team='test',run_name='fresh'))
+            originals = {}
+            models = {}
+            for level,dim in (('easy',54),('medium',72)):
+                arch = dict(state_dim=dim,history=2,chunk_size=8,width=16,heads=2,layers=1,latent_dim=4)
+                model = StageACT(arch)
+                model.obs_mean.fill_(.25)
+                model.obs_std.fill_(.75)
+                model.eval()
+                models[level] = model
+                cfg = dict(pick_sampling='all_picks',total_iters=12000)
+                policy = dict(model_config=arch,ensemble_window=4,act_horizon=1,auto_reset_steps=199)
+                job = dict(model_config=arch,train_config=cfg,source_sha256='fresh-test',policy_config=policy)
+                folder = root/level
+                (folder/'checkpoints').mkdir(parents=True)
+                (folder/'stage_train_job.json').write_text(json.dumps(job))
+                latest = folder/'checkpoints/latest.pt'
+                torch.save(dict(format='moveboxes-stage-act-v1',model_config=arch,model=model.state_dict(),
+                    step=12000,signature={k:job[k] for k in ('model_config','train_config','source_sha256')},
+                    optimizer={'retained':True},sample_rng=torch.Generator().get_state()),latest)
+                originals[latest] = latest.read_bytes()
+            target = package_retrain(child,['easy','medium'])
+            manifest = json.loads((target/'manifest.json').read_text())
+            for level,dim in (('easy',54),('medium',72)):
+                path = target/'checkpoints'/level/'model.pt'
+                saved = torch.load(path,weights_only=True)
+                self.assertEqual(set(saved),{'format','model_config','model','step'})
+                self.assertEqual(digest(path),manifest['levels'][level]['checkpoint_sha256'])
+                cfg = json.loads((path.parent/'policy_config.json').read_text())
+                deployed = load_stage(path,torch.zeros(1,dim),SimpleNamespace(shape=(4,)), 'cpu',**cfg)
+                expected = StagePolicy(models[level],auto_reset_steps=199)
+                for marker in (0.,.1,.2):
+                    frame = torch.full((1,dim),marker)
+                    torch.testing.assert_close(deployed.act(frame),expected.act(frame),rtol=0,atol=0)
+                torch.testing.assert_close(deployed.model.obs_mean,models[level].obs_mean,rtol=0,atol=0)
+            for path,content in originals.items():
+                self.assertEqual(path.read_bytes(),content)
+
+    def test_reference_check_preserves_current_candidate_and_loads_native_policy(self):
+        import importlib.util
+        from marso_experiment import digest
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = root/'current'
+            candidate.mkdir()
+            for name in ('stage_policy.py','stage_model.py','stage_schema.py'):
+                (candidate/name).write_bytes((ROOT/'ver2/stages'/name).read_bytes())
+            (candidate/'act_v2_model.py').write_bytes((ROOT/'ver2/act_v2_model.py').read_bytes())
+            arch = dict(state_dim=54,history=16,chunk_size=16,width=128,heads=4,layers=2,latent_dim=16)
+            source = root/'reference.pt'
+            model = StageACT(arch)
+            torch.save(dict(format='moveboxes-stage-act-v1',model_config=arch,model=model.state_dict(),step=6000),source)
+            expected = digest(source)
+            snapshot = dict(version=1,scope='easy',entries=[dict(path='easy/checkpoints/block_03.pt',
+                asset='checkpoint',sha256=expected,bytes=source.stat().st_size)])
+            store = mock.Mock()
+            store.load.return_value = True
+            store.assets = {stage_reference_check.SNAPSHOT:{'kind':'snapshot'},
+                            'checkpoint':{'kind':'checkpoint','size':source.stat().st_size}}
+            def download(asset,destination):
+                Path(destination).write_bytes(json.dumps(snapshot).encode() if asset['kind']=='snapshot' else source.read_bytes())
+            store.download.side_effect = download
+            preserved = {p:p.read_bytes() for p in candidate.iterdir()}
+            with mock.patch.object(stage_reference_check,'GitHubStore',return_value=store), \
+                 mock.patch.object(stage_reference_check,'REFERENCE_SHA256',expected):
+                reference = stage_reference_check.prepare_reference_check('test/repo',candidate,root/'reference_only')
+                with self.assertRaises(ValueError):
+                    stage_reference_check.prepare_reference_check('test/repo',candidate,candidate/'bad')
+            for path,content in preserved.items():
+                self.assertEqual(path.read_bytes(),content)
+            spec = importlib.util.spec_from_file_location('reference_execution',reference/'stage_chunk_policy.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            policy = module.load_policy(reference/'checkpoints/easy/model.pt',torch.zeros(1,54),
+                SimpleNamespace(shape=(4,)), 'cpu')
+            self.assertEqual(policy.act(torch.zeros(1,54)).shape,(1,4))
+            policy.policy.step = 199
+            policy.act(torch.zeros(1,54))
+            self.assertEqual(policy.policy.step,1)
+
+    def test_packaging_multiple_levels_preserves_already_refined_weights(self):
+        from marso_experiment import digest
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = root/'parent'
+            child = SimpleNamespace(run_dir=root/'child',cfg={'run_name':'child'})
+            manifest = dict(levels={})
+            for level,dim in (('easy',54),('medium',72)):
+                ckdir = candidate/'checkpoints'/level
+                ckdir.mkdir(parents=True)
+                path,policy = checkpoint(ckdir,dim)
+                path.rename(ckdir/'model.pt')
+                manifest['levels'][level] = dict(checkpoint_sha256=digest(ckdir/'model.pt'))
+                latest = child.run_dir/level/'checkpoints/latest.pt'
+                latest.parent.mkdir(parents=True)
+                saved = torch.load(ckdir/'model.pt',weights_only=True)
+                saved['step'] = 2000
+                torch.save(saved,latest)
+                (child.run_dir/level/'stage_train_job.json').write_text(json.dumps(dict(
+                    model_config=policy['model_config'],policy_config=policy)))
+                (child.run_dir/level/'pick_finetune_origin.json').write_text('{}')
+            (candidate/'manifest.json').write_text(json.dumps(manifest))
+            target = package_pick_finetune(child,candidate,'easy')
+            easy_hash = digest(target/'checkpoints/easy/model.pt')
+            package_pick_finetune(child,candidate,'medium')
+            self.assertEqual(digest(target/'checkpoints/easy/model.pt'),easy_hash)
+            self.assertEqual(digest(target/'checkpoints/medium/model.pt'),
+                             digest(child.run_dir/'medium/checkpoints/latest.pt'))
 
     def test_sequential_chunk_and_replan_uses_latest_history(self):
         model = Controlled()
@@ -282,6 +502,8 @@ class ChunkTests(unittest.TestCase):
                 target = namespace['CANDIDATE']/'checkpoints'/level/'model.pt'
                 policy = load_chunk_stage(target, torch.zeros(1,row['model_config']['state_dim']),
                     SimpleNamespace(shape=(4,)), 'cpu', **row['policy_config'])
+                self.assertTrue(policy.fresh_gripper)
+                self.assertFalse(policy.gripper_fsm)
                 self.assertEqual(policy.act(torch.zeros(1,row['model_config']['state_dim'])).shape, (1,4))
 
     def test_notebook_cells_compile_train_resume_and_official_eval(self):
@@ -314,7 +536,8 @@ class ChunkTests(unittest.TestCase):
         self.assertIn("UPSTREAM/'eval.py'", deadline_source)
         self.assertIn("UPSTREAM/'conf/eval/default.yaml'", deadline_source)
         self.assertIn('stage_aware_chunk=True', deadline_source)
-        self.assertIn('gripper_fsm=True', deadline_source)
+        self.assertIn('GRIPPER_FSM = False', deadline_source)
+        self.assertIn('FRESH_GRIPPER = True', deadline_source)
         self.assertIn('auto_reset_steps=MAX_STEPS-1', deadline_source)
         self.assertNotIn('drive.mount', deadline_source)
         self.assertNotIn('restore_baselines', deadline_source)

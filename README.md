@@ -1,5 +1,8 @@
 # moveBoxes
 
+**새 가중치 재학습:** [모든 다음 상자 집기 Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_all_pick_retrain_colab.ipynb) · [실패 원인 비교](ver2/stages/PICK_REGRESSION_AUDIT.md).
+기존 GitHub 토큰·데이터·T4 준비 후 별도 run에서 처음부터 StageACT를 학습합니다. 모든 상자 집기를 균등하게 보강하며, 매 step XYZ/그리퍼를 재추론합니다. 현재 실패 모델과 과거 best는 초기 가중치로 사용하지 않습니다. 500 step마다 optimizer/RNG를 백업하고 각 난이도의 공식 평가와 영상을 표시합니다. 실제 새 모델 점수는 아직 측정하지 않았습니다.
+
 **State Stage ACT 단일 deadline 정책:** [Colab](https://colab.research.google.com/github/SongYunu/moveBoxes/blob/stage-act-chunk-compare/notebooks/moveboxes_stage_deadline_colab.ipynb) · [구성과 실행 안내](ver2/stages/DEADLINE_POLICY.md).
 GitHub 토큰 인증과 state dataset 검증부터 State Stage ACT 학습, 중단 복구, stage-aware chunk·learned gripper 안정화, 공식 `eval.py` 평가, rollout 영상의 Colab inline 재생, ZIP 생성까지 한 Colab에서 실행합니다. Drive는 사용하지 않으며 과거 best는 자동 복원하지 않습니다. **새 로직의 실제 Colab 점수는 아직 측정하지 않았습니다.**
 

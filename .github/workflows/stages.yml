@@ -15,8 +15,13 @@ jobs:
       - run: python -m unittest discover -s tests_stages -v
       - run: python build_stage_notebook.py
       - run: python build_stage_deadline_notebook.py
+      - run: python build_stage_execution_check_notebook.py
+      - run: python build_pick_refine_notebook.py
+      - run: python build_stage_retrain_notebook.py
       # Saved Easy/Medium notebooks may contain Colab results; their generators are tested above.
       - run: python medium/code/build_medium_v21_notebook.py
       - run: git diff --exit-code -- notebooks/moveboxes_stages_colab.ipynb notebooks/moveboxes_stage_repair_colab.ipynb
       - run: git diff --exit-code -- notebooks/moveboxes_stage_deadline_colab.ipynb notebooks/moveboxes_stage_runtime_repair.ipynb notebooks/moveboxes_stage_runtime_repair.py
+      - run: git diff --exit-code -- notebooks/moveboxes_stage_execution_check_colab.ipynb notebooks/moveboxes_stage_pick_refine_colab.ipynb
+      - run: git diff --exit-code -- notebooks/moveboxes_stage_all_pick_retrain_colab.ipynb
       - run: git diff --exit-code -- notebooks/moveboxes_medium_v21_colab.ipynb

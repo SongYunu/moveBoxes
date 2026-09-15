@@ -5,7 +5,7 @@ from pathlib import Path
 if 'experiment' not in globals() or 'CFG' not in globals():
     raise RuntimeError('학습한 노트북의 같은 런타임 아래에 이 셀을 추가하세요.')
 RUN_DIR = Path(experiment.run_dir)
-CANDIDATE = RUN_DIR/'integrated_candidate'
+CANDIDATE = Path(globals().get('CANDIDATE', RUN_DIR/'integrated_candidate'))
 UPSTREAM = Path(CFG['repo_dir'])
 manifest = json.loads((CANDIDATE/'manifest.json').read_text(encoding='utf-8'))
 selected = {level:CANDIDATE/'checkpoints'/level/'model.pt'
@@ -94,16 +94,17 @@ SMOKE_CONFIG = RUN_DIR/'integrated_smoke_eval.yaml'
 SMOKE_CONFIG.write_text('eval:\n  n_episodes: 1\n  seeds: ['+str(SMOKE_SEED)+']\n', encoding='utf-8')
 UPSTREAM = Path(CFG['repo_dir'])
 
-def run_official(level, eval_config, label):
+def run_official(level, eval_config, label, candidate=None):
+    candidate = Path(candidate) if candidate is not None else CANDIDATE
     output = RUN_DIR/level/'integrated_official_eval'/label
     output.mkdir(parents=True, exist_ok=True)
     command = [sys.executable, str(UPSTREAM/'eval.py'), 'difficulty='+level,
         'obs_mode=state', 'policy=stage_chunk_policy:load_policy',
-        'checkpoint='+str(CANDIDATE/'checkpoints'/level/'model.pt'),
+        'checkpoint='+str(candidate/'checkpoints'/level/'model.pt'),
         'eval_config='+str(eval_config), 'max_episode_steps='+str(MAX_STEPS),
         'hydra.run.dir='+str(output)]
     child_env = dict(os.environ)
-    child_env['PYTHONPATH'] = str(CANDIDATE)+os.pathsep+str(UPSTREAM)+os.pathsep+child_env.get('PYTHONPATH','')
+    child_env['PYTHONPATH'] = str(candidate)+os.pathsep+str(UPSTREAM)+os.pathsep+child_env.get('PYTHONPATH','')
     log = output/'official_eval.log'
     with log.open('w', encoding='utf-8') as handle:
         process = subprocess.Popen(command, cwd=UPSTREAM, env=child_env,

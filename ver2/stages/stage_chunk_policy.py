@@ -15,7 +15,7 @@ from stage_schema import PICK, HOLD, RECOVER, STAGES
 class ChunkStagePolicy(StagePolicy):
     def __init__(self, model, stage_horizons=None, gripper_fsm=False,
                  gripper_margin=.5, gripper_confirm_steps=2,
-                 auto_reset_steps=None, **kwargs):
+                 auto_reset_steps=None, fresh_gripper=False, **kwargs):
         # Conservative starts: pick/place each contain multiple fine motor phases.
         horizons = dict(pick=2, carry=6, place=2, done=1)
         if stage_horizons is not None:
@@ -32,11 +32,12 @@ class ChunkStagePolicy(StagePolicy):
         self.gripper_fsm = bool(gripper_fsm)
         self.gripper_margin = gripper_margin
         self.gripper_confirm_steps = gripper_confirm_steps
+        self.fresh_gripper = bool(fresh_gripper)
         # The official evaluator resets the environment between fixed-length
         # batches without calling policy.reset(). Match that boundary here so
         # history, stages, chunks and the gripper latch cannot cross episodes.
         self.auto_reset_steps = auto_reset_steps
-        super().__init__(model, **kwargs)
+        super().__init__(model, auto_reset_steps=auto_reset_steps, **kwargs)
 
     def reset(self):
         super().reset()
@@ -76,17 +77,29 @@ class ChunkStagePolicy(StagePolicy):
         self.remaining[invalidate] = 0
         self.action_buffer[invalidate] = 0
         replan = self.remaining == 0
+        fresh_prediction = None
+        if self.fresh_gripper:
+            # Contact/release commands must use the current observation, even
+            # while XYZ continues its configured chunk. Reuse this decode for
+            # rows whose XYZ buffer also needs replenishing.
+            fresh_prediction, _ = self.model.decode(x, memory, self.stage)
+            if fresh_prediction.shape != self.action_buffer.shape or not torch.isfinite(fresh_prediction).all():
+                raise ValueError('Invalid fresh gripper prediction')
+            self.decoder_calls += 1
         if replan.any():
-            prediction, _ = self.model.decode(x[replan], memory[replan], self.stage[replan])
+            if fresh_prediction is None:
+                prediction, _ = self.model.decode(x[replan], memory[replan], self.stage[replan])
+                self.decoder_calls += 1
+            else:
+                prediction = fresh_prediction[replan]
             if prediction.shape != (int(replan.sum()), self.model.cfg['chunk_size'], 4) or not torch.isfinite(prediction).all():
                 raise ValueError('Invalid action chunk from model')
             self.action_buffer[replan] = prediction
             self.cursor[replan] = 0
             lengths = torch.tensor([self.stage_horizons[s] for s in STAGES], device=self.device)
             self.remaining[replan] = lengths[self.stage[replan]]
-            self.decoder_calls += 1
         command = self.action_buffer[torch.arange(self.batch, device=self.device), self.cursor].clone()
-        logits = command[:, 3]
+        logits = fresh_prediction[:, 0, 3] if self.fresh_gripper else command[:, 3]
         grip = torch.where(logits >= 0, 1., -1.)
         if self.gripper_fsm:
             # Reset the filter on transitions/recovery: a new learned command is
@@ -106,7 +119,8 @@ class ChunkStagePolicy(StagePolicy):
         self.remaining -= 1
         self.last_decision = dict(previous=old, stage=self.stage.clone(), proposed_stage=phase,
             gate=gate, accepted=accepted, gate_confidence=gate_p, stage_confidence=phase_p,
-            buffer_reset=invalidate, replanned=replan, buffer_remaining=self.remaining.clone())
+            buffer_reset=invalidate, replanned=replan, buffer_remaining=self.remaining.clone(),
+            gripper_logit=logits.clone())
         self.step += 1
         return torch.cat((command[:, :3].clamp(-1, 1), grip[:, None]), -1)
 
@@ -119,7 +133,7 @@ def load_chunk_stage(checkpoint, sample_obs, action_space, device, **cfg):
         return baseline
     keys = ('gate_threshold', 'stage_threshold', 'temporal_decay', 'ensemble_window',
             'stage_horizons', 'gripper_fsm', 'gripper_margin', 'gripper_confirm_steps',
-            'auto_reset_steps')
+            'auto_reset_steps', 'fresh_gripper')
     return ChunkStagePolicy(baseline.model, **{k: cfg[k] for k in keys if k in cfg})
 
 

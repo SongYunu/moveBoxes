@@ -32,7 +32,10 @@ def make_notebook(config=None):
     bootstrap = bootstrap.replace('from act_v2_experiment import ActV2Experiment, source_bundle\nexperiment = ActV2Experiment(CFG, source_bundle())',
         "sys.path.insert(0, str(PROJECT/'ver2'/'stages'))\n"
         "for name in ('stage_schema','stage_model','stage_policy','stage_labels','stage_data','stage_teacher',\n"
-        "             'stage_collect','stage_eval','stage_experiment','build_stage_notebook'):\n"
+        "             'stage_collect','stage_eval','stage_experiment','stage_chunk_policy',\n"
+        "             'stage_pick_sampling','stage_pick_train','stage_all_pick_retrain',\n"
+        "             'stage_pick_finetune','stage_pick_diagnose','stage_reference_check',\n"
+        "             'build_stage_notebook'):\n"
         "    if name in sys.modules:\n        importlib.reload(sys.modules[name])\n"
         'from stage_experiment import StageExperiment, source_bundle\nexperiment = StageExperiment(CFG, source_bundle())')
     nb['cells'][1]['source'] = bootstrap.splitlines(keepends=True)
