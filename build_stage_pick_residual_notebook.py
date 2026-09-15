@@ -5,7 +5,7 @@ from pathlib import Path
 from build_stage_anchor_notebook import make_notebook as anchor_notebook
 
 
-IMPLEMENTATION_COMMIT = 'TO_BE_PINNED'
+IMPLEMENTATION_COMMIT = 'b67d8ba6ddcf1d514a33ca2e82859a534720dc47'
 
 
 def make_notebook():
