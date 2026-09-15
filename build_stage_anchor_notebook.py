@@ -86,39 +86,62 @@ print(json.dumps(BASELINE_RESULTS, indent=2))
 
     add('markdown', '''## 성공 보상 RL
 
-각 RL iteration은 무작위 실전 환경 16개를 200 step 실행합니다. 보상은 환경이 제공하는 `delta success_count`뿐입니다. 성공 상자가 하나도 없는 rollout은 업데이트를 건너뜁니다. 매 iteration마다 모델·optimizer·난수 상태를 저장하므로 셀 재실행 시 이어집니다.
+각 RL iteration은 무작위 실전 환경 16개를 200 step 실행합니다. 보상은 환경이 제공하는 `delta success_count`뿐입니다. 성공 상자가 하나도 없는 rollout은 업데이트를 건너뜁니다. 총 24회까지 학습하되 8회마다 공식 평가합니다. 중간 최고 체크포인트를 별도로 저장하므로 뒤의 라운드에서 성능이 떨어져도 좋은 모델을 잃지 않습니다. 매 iteration마다 모델·optimizer·난수 상태를 GitHub에 저장하므로 셀 재실행 시 이어집니다.
 ''', 'success-rl-guide')
 
-    add('code', '''# 09 · Medium 성공 보상 RL → 같은 공식 test
-medium_rl = prepare_success_rl(anchor_exp, 'medium', iterations=8, num_envs=16,
-                               lr=5e-6, xyz_std=.05)
-train_success_rl(medium_rl, 'medium')
-MEDIUM_RL = package(medium_rl, use_trained={'medium':True,'hard':False},
-                    folder_name='medium_success_rl_candidate')
-MEDIUM_RESULT = run_official(MEDIUM_RL, 'medium', 'success_rl_default')
-MEDIUM_USE_RL = MEDIUM_RESULT['score'] > BASELINE_RESULTS['medium']['score']
-print('Medium 선택:', 'success RL' if MEDIUM_USE_RL else '검증 앵커',
-      MEDIUM_RESULT['score'], 'vs', BASELINE_RESULTS['medium']['score'])
+    add('code', '''# 09 · 8회 단위 공식 평가와 중간 최고 체크포인트 보존
+def evaluate_success_round(rl_exp, level, stop, best):
+    boundary = rl_exp.run_dir/level/'checkpoints'/f'iteration_{stop:04d}.pt'
+    if not boundary.is_file():
+        raise FileNotFoundError(f'라운드 체크포인트가 없습니다: {boundary}')
+    candidate = package(rl_exp, checkpoint_overrides={level:boundary},
+                        folder_name=f'{level}_success_rl_round_{stop:02d}')
+    result = run_official(candidate, level, f'success_rl_round_{stop:02d}')
+    result.update(iteration=stop, source='success_rl')
+    history_path = rl_exp.run_dir/level/'official_rounds.json'
+    history = json.loads(history_path.read_text()) if history_path.is_file() else []
+    history = [item for item in history if item.get('iteration') != stop]
+    history.append({k:v for k,v in result.items() if k != 'checkpoint'})
+    history_path.write_text(json.dumps(history, indent=2), encoding='utf-8')
+    if result['score'] > best['score']:
+        promoted = rl_exp.run_dir/level/'checkpoints'/'official_best.pt'
+        shutil.copy2(result['checkpoint'], promoted)
+        result['checkpoint'] = str(promoted)
+        best = result
+        print(f'{level} {stop}회: 새 최고 공식 점수 {result["score"]:.3%}')
+    else:
+        print(f'{level} {stop}회: {result["score"]:.3%}; 현재 최고 {best["score"]:.3%} 유지')
+    rl_exp.sync_level(level)
+    return best
+
+# Medium: 하나의 학습 궤적을 8 → 16 → 24회까지 이어서 평가
+medium_rl = prepare_success_rl(anchor_exp, 'medium', run_suffix='_success_rl_v3_long',
+                               iterations=24, num_envs=16, lr=5e-6, xyz_std=.05)
+MEDIUM_BEST = dict(BASELINE_RESULTS['medium'], iteration=0, source='anchor')
+for stop in (8, 16, 24):
+    train_success_rl(medium_rl, 'medium', until_iteration=stop)
+    MEDIUM_BEST = evaluate_success_round(medium_rl, 'medium', stop, MEDIUM_BEST)
+MEDIUM_USE_RL = MEDIUM_BEST['source'] == 'success_rl'
+print('Medium 최종 선택:', MEDIUM_BEST)
 ''', 'success-rl-medium')
 
-    add('code', '''# 10 · Hard 성공 보상 RL → 같은 공식 test
-hard_rl = prepare_success_rl(anchor_exp, 'hard', iterations=10, num_envs=16,
-                             lr=5e-6, xyz_std=.06)
-train_success_rl(hard_rl, 'hard')
-HARD_RL = package(hard_rl, use_trained={'medium':False,'hard':True},
-                  folder_name='hard_success_rl_candidate')
-HARD_RESULT = run_official(HARD_RL, 'hard', 'success_rl_default')
-HARD_USE_RL = HARD_RESULT['score'] > BASELINE_RESULTS['hard']['score']
-print('Hard 선택:', 'success RL' if HARD_USE_RL else '검증 앵커',
-      HARD_RESULT['score'], 'vs', BASELINE_RESULTS['hard']['score'])
+    add('code', '''# 10 · Hard도 8 → 16 → 24회까지 이어서 평가
+hard_rl = prepare_success_rl(anchor_exp, 'hard', run_suffix='_success_rl_v3_long',
+                             iterations=24, num_envs=16, lr=5e-6, xyz_std=.06)
+HARD_BEST = dict(BASELINE_RESULTS['hard'], iteration=0, source='anchor')
+for stop in (8, 16, 24):
+    train_success_rl(hard_rl, 'hard', until_iteration=stop)
+    HARD_BEST = evaluate_success_round(hard_rl, 'hard', stop, HARD_BEST)
+HARD_USE_RL = HARD_BEST['source'] == 'success_rl'
+print('Hard 최종 선택:', HARD_BEST)
 ''', 'success-rl-hard')
 
     add('code', '''# 11 · 공식 점수로 자동 선택한 단일 제출 candidate + 최종 재검증 + ZIP
 selected = {}
 if globals().get('MEDIUM_USE_RL', False):
-    selected['medium'] = Path(MEDIUM_RESULT['checkpoint'])
+    selected['medium'] = Path(MEDIUM_BEST['checkpoint'])
 if globals().get('HARD_USE_RL', False):
-    selected['hard'] = Path(HARD_RESULT['checkpoint'])
+    selected['hard'] = Path(HARD_BEST['checkpoint'])
 FINAL = package(anchor_exp, checkpoint_overrides=selected, folder_name='final_success_rl_candidate')
 FINAL_RESULTS = {level:run_official(FINAL, level, 'final_default')
                  for level in ('easy','medium','hard')}

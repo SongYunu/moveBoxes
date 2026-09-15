@@ -175,18 +175,25 @@ def prepare_success_rl(base, level, *, run_suffix='_success_rl_v2', iterations=8
     return child
 
 
-def train_success_rl(child, level):
+def train_success_rl(child, level, until_iteration=None):
     if level not in ('medium','hard'):
         raise ValueError('Easy anchor is frozen')
     folder = child.run_dir/level
     job = folder/'success_rl_job.json'
     if not job.is_file():
         raise FileNotFoundError(job)
+    configured = read_json(job)['rl_config']['iterations']
+    if until_iteration is not None and (type(until_iteration) is not int or
+                                        not 1 <= until_iteration <= configured):
+        raise ValueError('until_iteration must be in 1..configured iterations')
     if read_json(folder/'training_complete.json'):
         print(f'[{level}] completed success-RL checkpoint reused')
         return
     with child.persist_operation(level):
-        child.run([sys.executable, str(child.repo/'stage_success_rl.py'), str(job)],
+        command = [sys.executable, str(child.repo/'stage_success_rl.py'), str(job)]
+        if until_iteration is not None:
+            command.append(str(until_iteration))
+        child.run(command,
                   cwd=child.repo, log=folder/'success_rl.log')
 
 

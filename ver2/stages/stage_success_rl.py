@@ -2,6 +2,7 @@
 import json
 import os
 import random
+import shutil
 import sys
 from collections import deque
 from pathlib import Path
@@ -154,10 +155,13 @@ def atomic_save(path, value):
     os.replace(str(path)+'.tmp', path)
 
 
-def train(job):
+def train(job, stop_after=None):
     from warehouse_sort.utils import compose_cfg, make_env
 
     cfg = dict(job['rl_config'])
+    target_iteration = cfg['iterations'] if stop_after is None else int(stop_after)
+    if not 1 <= target_iteration <= cfg['iterations']:
+        raise ValueError('stop_after must be in 1..configured iterations')
     device = torch.device(job.get('device','cuda'))
     if device.type == 'cuda' and not torch.cuda.is_available():
         raise RuntimeError('T4 GPU 런타임을 선택하세요.')
@@ -173,7 +177,8 @@ def train(job):
     model.to(device); reference.to(device)
     optimizer = torch.optim.Adam((p for p in model.parameters() if p.requires_grad), lr=cfg['lr'])
     folder = Path(job['folder']); ckdir = folder/'checkpoints'; ckdir.mkdir(parents=True, exist_ok=True)
-    latest = ckdir/'latest.pt'; start = 0; history = []
+    latest = ckdir/'latest.pt'; boundary = ckdir/f'iteration_{target_iteration:04d}.pt'
+    start = 0; history = []
     if latest.exists():
         resume = torch.load(latest, map_location='cpu', weights_only=True)
         if resume.get('job_signature') != job['job_signature']:
@@ -184,10 +189,15 @@ def train(job):
             torch.cuda.set_rng_state_all(resume['cuda_rng'])
         start = resume['iteration']
         history = json.loads((folder/'rl_progress.json').read_text())['history']
+    if start > target_iteration:
+        if not boundary.is_file():
+            raise FileNotFoundError(f'Missing earlier round checkpoint: {boundary}')
+        print(f'RL {target_iteration}/{cfg["iterations"]} round checkpoint reused', flush=True)
+        return
     env_cfg = compose_cfg(['difficulty='+job['level'], 'num_envs='+str(cfg['num_envs'])], job['config_dir'])
     env, _ = make_env(env_cfg, 'state', env_cfg.randomization, num_envs=cfg['num_envs'])
     try:
-        for iteration in range(start, cfg['iterations']):
+        for iteration in range(start, target_iteration):
             rollout_cfg = dict(cfg, iteration=iteration)
             rollout = collect(env, model.eval(), rollout_cfg, device)
             metrics = ppo_update(model, reference, rollout, cfg, optimizer, device)
@@ -206,10 +216,19 @@ def train(job):
             sync_from_env()
     finally:
         env.close()
-    save_json(folder/'training_complete.json', dict(iterations=cfg['iterations'],
-        reward='environment sparse reward only'))
+    pending_boundary = Path(str(boundary)+'.tmp')
+    shutil.copy2(latest, pending_boundary)
+    os.replace(pending_boundary, boundary)
+    if target_iteration == cfg['iterations']:
+        save_json(folder/'training_complete.json', dict(iterations=cfg['iterations'],
+            reward='environment sparse reward only'))
+        (folder/'training_paused.json').unlink(missing_ok=True)
+    else:
+        save_json(folder/'training_paused.json', dict(iteration=target_iteration,
+            configured_iterations=cfg['iterations'], reward='environment sparse reward only'))
     sync_from_env()
 
 
 if __name__ == '__main__':
-    train(json.loads(Path(sys.argv[1]).read_text(encoding='utf-8')))
+    train(json.loads(Path(sys.argv[1]).read_text(encoding='utf-8')),
+          int(sys.argv[2]) if len(sys.argv) > 2 else None)

@@ -23,8 +23,12 @@ class AnchorTests(unittest.TestCase):
         self.assertIn("prepare_success_rl(anchor_exp, 'medium'", source)
         self.assertIn("prepare_success_rl(anchor_exp, 'hard'", source)
         self.assertNotIn("prepare_success_rl(anchor_exp, 'easy'", source)
-        self.assertIn("MEDIUM_RESULT['score'] > BASELINE_RESULTS['medium']['score']", source)
-        self.assertIn("HARD_RESULT['score'] > BASELINE_RESULTS['hard']['score']", source)
+        self.assertIn("for stop in (8, 16, 24)", source)
+        self.assertIn("result['score'] > best['score']", source)
+        self.assertIn("'official_best.pt'", source)
+        self.assertIn("until_iteration=stop", source)
+        self.assertIn("MEDIUM_BEST['source'] == 'success_rl'", source)
+        self.assertIn("HARD_BEST['source'] == 'success_rl'", source)
         self.assertIn('imitation loss를 사용하지 않습니다', source)
         for cell in notebook['cells']:
             if cell['cell_type'] == 'code':
